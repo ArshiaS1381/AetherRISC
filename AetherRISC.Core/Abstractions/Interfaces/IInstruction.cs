@@ -1,22 +1,20 @@
 using AetherRISC.Core.Architecture;
 
-namespace AetherRISC.Core.Abstractions.Interfaces;
-
-public interface IInstruction
+namespace AetherRISC.Core.Abstractions.Interfaces
 {
-    string Mnemonic { get; }
-    
-    // Exposed Metadata for Pipeline
-    int Rd { get; }      // Destination Register
-    int Rs1 { get; }     // Source 1
-    int Rs2 { get; }     // Source 2
-    int Imm { get; }     // Immediate Value
-    
-    // Control Signals
-    bool IsLoad { get; }
-    bool IsStore { get; }
-    bool IsBranch { get; }
-    bool IsJump { get; }
+    public interface IInstruction
+    {
+        string Mnemonic { get; }
+        int Rd { get; }
+        int Rs1 { get; }
+        int Rs2 { get; }
+        int Imm { get; }
 
-    void Execute(MachineState state);
+        bool IsLoad { get; }
+        bool IsStore { get; }
+        bool IsBranch { get; }
+        bool IsJump { get; }
+
+        void Execute(MachineState state, InstructionData data);
+    }
 }

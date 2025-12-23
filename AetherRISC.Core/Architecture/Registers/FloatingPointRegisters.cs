@@ -1,48 +1,36 @@
-namespace AetherRISC.Core.Architecture.Registers;
+using System;
 
-public class FloatingPointRegisters
+namespace AetherRISC.Core.Architecture.Registers
 {
-    // 32 registers, 64-bit width (to hold Doubles).
-    private readonly double[] _registers = new double[32];
-
-    // Control Status Register for rounding modes and flags (fcsr)
-    public uint Fcsr { get; set; }
-
-    public double ReadDouble(int index)
+    public class FloatingPointRegisters
     {
-        if (index < 0 || index >= 32) return 0.0;
-        return _registers[index];
-    }
+        private readonly ulong[] _regs = new ulong[32];
 
-    public float ReadSingle(int index)
-    {
-        // RISC-V F extension behavior: check for NaN boxing here in valid hardware,
-        // but for now we simply cast down.
-        return (float)_registers[index];
-    }
-
-    public void WriteDouble(int index, double value)
-    {
-        if (index >= 0 && index < 32)
+        public ulong Read(int index) => _regs[index];
+        public void Write(int index, ulong value) => _regs[index] = value;
+        
+        // Overload to handle raw bits (used by Load instructions)
+        public void WriteSingle(int index, uint value)
         {
-            _registers[index] = value;
+             _regs[index] = 0xFFFFFFFF00000000UL | (ulong)value;
         }
-    }
 
-    public void WriteSingle(int index, float value)
-    {
-        if (index >= 0 && index < 32)
+        // NEW: Overload to handle actual float values (used by Compute instructions)
+        public void WriteSingle(int index, float value)
         {
-            // When writing a single float into a 64-bit register, 
-            // RISC-V requires "NaN Boxing" (setting upper bits to 1).
-            // We store the simple value for now, but implementation detail goes here.
-            _registers[index] = (double)value;
+            uint bits = BitConverter.SingleToUInt32Bits(value);
+            WriteSingle(index, bits);
         }
-    }
 
-    public void Reset()
-    {
-        Array.Clear(_registers, 0, 32);
-        Fcsr = 0;
+        public float ReadSingle(int index)
+        {
+            return BitConverter.UInt32BitsToSingle((uint)(_regs[index] & 0xFFFFFFFF));
+        }
+
+        public void WriteDouble(int index, double value) 
+            => _regs[index] = BitConverter.DoubleToUInt64Bits(value);
+
+        public double ReadDouble(int index)
+            => BitConverter.UInt64BitsToDouble(_regs[index]);
     }
 }

@@ -1,7 +1,7 @@
-using System;
+using AetherRISC.Core.Architecture;
 using AetherRISC.Core.Architecture.Registers;
-using AetherRISC.Core.Hardware.ISA.Base;
-using AetherRISC.Core.Hardware.ISA.Decoding;
+using AetherRISC.Core.Architecture.ISA.Base;
+using AetherRISC.Core.Architecture.ISA.Decoding;
 using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.Core.Architecture.Pipeline;
@@ -26,29 +26,50 @@ public class PipelineController
         Stage_Fetch();
     }
 
-    private void Stage_Writeback() {
-        if (MemWb.RegWrite && MemWb.Rd != 0)
-            _state.Registers.Write(MemWb.Rd, MemWb.FinalResult);
-    }
+    private void Stage_Writeback() { } 
 
     private void Stage_Memory() {
-        ulong res = ExMem.AluResult;
-        if (ExMem.MemRead && _state.Memory != null)
-            res = (ExMem.DecodedInst is LdInstruction) ? _state.Memory.ReadDoubleWord((uint)ExMem.AluResult) : _state.Memory.ReadWord((uint)ExMem.AluResult);
-        else if (ExMem.MemWrite && _state.Memory != null) {
-            if (ExMem.DecodedInst is SdInstruction) _state.Memory.WriteDoubleWord((uint)ExMem.AluResult, ExMem.WriteData);
-            else _state.Memory.WriteWord((uint)ExMem.AluResult, (uint)ExMem.WriteData);
-        }
-        MemWb.FinalResult = res;
+        // Latch propagation
         MemWb.Rd = ExMem.Rd;
         MemWb.RegWrite = ExMem.RegWrite;
         MemWb.PC = ExMem.PC;
         MemWb.RawInstruction = ExMem.RawInstruction;
         MemWb.DecodedInst = ExMem.DecodedInst;
+        
+        // Pass result through. 
+        // Since Execute() updates registers immediately, and we capture that update in AluResult,
+        // this carries the "Real" value (Load Data or ALU Calc) to the end.
+        MemWb.FinalResult = ExMem.AluResult;
     }
 
     private void Stage_Execute() {
-        var inst = IdEx.DecodedInst;
+        if (IdEx.DecodedInst == null) {
+            ExMem.RegWrite = false;
+            ExMem.DecodedInst = null;
+            return;
+        }
+
+        // --- SIMPLIFIED PIPELINE ---
+        // Forwarding Logic REMOVED.
+        // In this architecture, Instruction.Execute() writes to the Register File immediately.
+        // Therefore, any subsequent instruction (even in the next cycle) will read the 
+        // correct, updated value from the Register File automatically.
+        // The previous forwarding logic was incorrectly overwriting valid register data 
+        // with stale or empty latch data (the "Ghost 0" bug).
+
+        var data = new InstructionData 
+        {
+            Rd = IdEx.Rd,
+            Rs1 = IdEx.DecodedInst.Rs1,
+            Rs2 = IdEx.DecodedInst.Rs2,
+            Immediate = (ulong)(long)IdEx.DecodedInst.Imm,
+            PC = IdEx.PC 
+        };
+
+        // Execute Operation (Writes to Registers immediately)
+        IdEx.DecodedInst.Execute(_state, data);
+
+        // Update Pipeline Latches
         ExMem.PC = IdEx.PC;
         ExMem.RawInstruction = IdEx.RawInstruction;
         ExMem.DecodedInst = IdEx.DecodedInst;
@@ -56,61 +77,26 @@ public class PipelineController
         ExMem.RegWrite = IdEx.RegWrite;
         ExMem.MemRead = IdEx.MemRead;
         ExMem.MemWrite = IdEx.MemWrite;
-
-        if (inst == null) return;
-
-        // --- SIGNED MATH & FORWARDING ---
-        long v1 = (long)_state.Registers.Read(inst.Rs1);
-        long v2 = (long)_state.Registers.Read(inst.Rs2);
-
-        if (ExMem.RegWrite && ExMem.Rd != 0) {
-            if (ExMem.Rd == inst.Rs1) v1 = (long)ExMem.AluResult;
-            if (ExMem.Rd == inst.Rs2) v2 = (long)ExMem.AluResult;
-        }
-        if (MemWb.RegWrite && MemWb.Rd != 0) {
-            if (MemWb.Rd == inst.Rs1 && !(ExMem.RegWrite && ExMem.Rd == inst.Rs1)) v1 = (long)MemWb.FinalResult;
-            if (MemWb.Rd == inst.Rs2 && !(ExMem.RegWrite && ExMem.Rd == inst.Rs2)) v2 = (long)MemWb.FinalResult;
-        }
-
-        ExMem.WriteData = (ulong)v2;
-        long res = 0;
-        long nPC = (long)IdEx.PC + 4;
-
-        if (inst is AddiInstruction i) res = v1 + i.Imm;
-        else if (inst is AluInstruction a) {
-            if (a.Mnemonic == "ADD") res = v1 + v2;
-            else if (a.Mnemonic == "MUL") res = v1 * v2;
-            else if (a.Mnemonic == "SUB") res = v1 - v2;
-            else if (a.Mnemonic == "SLT") res = v1 < v2 ? 1 : 0;
-        } 
-        else if (inst is JalInstruction j) { res = (long)IdEx.PC + 4; nPC = (long)IdEx.PC + j.Imm; }
-        else if (inst is JalrInstruction jr) { res = (long)IdEx.PC + 4; nPC = v1 + jr.Imm; }
-        else if (inst is BneInstruction b) { if (v1 != v2) nPC = (long)IdEx.PC + b.Imm; }
-        else if (inst is LdInstruction ld) res = v1 + ld.Imm;
-        else if (inst is SdInstruction sd) res = v1 + sd.Imm;
-        else if (inst is EcallInstruction) {
-            if (v1 == 1) _state.Host?.PrintInt(v2);
-            else if (v1 == 10) _state.Host?.Exit(0);
-        }
-
-        ExMem.AluResult = (ulong)res;
-        if (nPC != (long)IdEx.PC + 4) {
-            // Safety: Clamp PC to mapped memory (4KB) to prevent rollover
-            if (nPC < 0 || nPC >= 4096) nPC = 0; 
-            _state.ProgramCounter = (ulong)nPC;
-            IfId.IsValid = false;
-            IdEx.DecodedInst = null;
+        
+        // Capture the Result that was just written to the registers
+        // This ensures the pipeline latches carry the correct state for debug/visualization
+        if (IdEx.RegWrite && IdEx.Rd != 0) {
+            ExMem.AluResult = _state.Registers.Read(IdEx.Rd);
         }
     }
 
     private void Stage_Decode() {
-        if (!IfId.IsValid) { IdEx.DecodedInst = null; return; }
+        if (!IfId.IsValid) { 
+            IdEx.DecodedInst = null; IdEx.Rd = 0; IdEx.RegWrite = false; IdEx.MemRead = false; IdEx.MemWrite = false; return; 
+        }
+
         var inst = _decoder.Decode(IfId.Instruction);
         IdEx.DecodedInst = inst;
         IdEx.RawInstruction = IfId.Instruction;
         IdEx.PC = IfId.PC;
         IdEx.Rd = inst.Rd;
-        IdEx.RegWrite = !inst.IsStore && !inst.IsBranch && !inst.IsJump && inst.Mnemonic != "BUBBLE" && inst.Mnemonic != "NOP";
+        // Ensure RegWrite is False for non-writing ops to prevent latch pollution
+        IdEx.RegWrite = !inst.IsStore && !inst.IsBranch && inst.Mnemonic != "BUBBLE" && inst.Mnemonic != "NOP" && inst.Mnemonic != "ECALL" && inst.Mnemonic != "FENCE" && inst.Mnemonic != "EBREAK";
         IdEx.MemRead = inst.IsLoad;
         IdEx.MemWrite = inst.IsStore;
     }

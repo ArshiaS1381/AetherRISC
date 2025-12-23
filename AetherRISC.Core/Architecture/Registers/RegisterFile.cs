@@ -1,46 +1,36 @@
-namespace AetherRISC.Core.Architecture.Registers;
+using System;
 
-public class RegisterFile
+namespace AetherRISC.Core.Architecture.Registers
 {
-    private readonly ulong[] _registers = new ulong[32];
-    private readonly SystemConfig _config;
-
-    public RegisterFile(SystemConfig config = null)
+    public class RegisterFile
     {
-        // Default to RV64 if no config provided for backward compatibility
-        _config = config ?? SystemConfig.Rv64();
-    }
+        private readonly ulong[] _registers = new ulong[32];
 
-    public ulong Read(int index)
-    {
-        if (index == 0) return 0;
-        
-        // In RV32, even if we store ulong, the upper bits should effectively be ignored/sign-extended.
-        // But if we enforce clamping on WRITE, reads are safe.
-        return _registers[index];
-    }
-    
-    // Helper for debugging/tests to get signed 32-bit view
-    public int Read32(int index) => (int)_registers[index];
+        // We assume 64-bit storage always.
+        // In 32-bit mode, we just ensure values are sign-extended or truncated appropriately
+        // usually handled by the Instruction Execute logic, but we can enforce it here too.
 
-    public void Write(int index, ulong value)
-    {
-        if (index == 0) return;
-
-        if (_config.Architecture == ArchitectureMode.Rv32)
+        public ulong Read(int index)
         {
-            // --- RV32 MODE: TRUNCATE ---
-            // Simulate 32-bit register behavior by masking.
-            // When reading back as ulong later, it will look like a zero-extended 32-bit value.
-            // (Note: RISC-V usually sign-extends 32-bit values into 64-bit registers, 
-            // but for a pure RV32 simulation, zero-extension or simple masking is sufficient 
-            // as instructions wont look at upper bits).
-            _registers[index] = value & 0xFFFFFFFF;
+            if (index == 0) return 0;
+            if (index < 0 || index >= 32) return 0;
+            return _registers[index];
         }
-        else
+
+        public void Write(int index, ulong value)
         {
-            // --- RV64 MODE: FULL WIDTH ---
+            if (index == 0) return; // x0 is always hardwired to 0
+            if (index < 0 || index >= 32) return;
+
+            // Note: In a rigorous emulator, we might pass the SystemConfig here 
+            // to truncate 32-bit values if we were in RV32 mode.
+            // However, our instructions (ADD, SUB, etc.) are already handling the truncation logic
+            // before calling Write(). So we can just store the raw bits here.
+            
             _registers[index] = value;
         }
+
+        // Helper for debugging/tests
+        public ulong[] Dump() => (ulong[])_registers.Clone();
     }
 }

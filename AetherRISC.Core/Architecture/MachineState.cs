@@ -1,29 +1,28 @@
 using AetherRISC.Core.Architecture.Registers;
 using AetherRISC.Core.Abstractions.Interfaces;
+using AetherRISC.Core.Architecture.Memory;
 
-namespace AetherRISC.Core.Architecture;
-
-public class MachineState
+namespace AetherRISC.Core.Architecture
 {
-    public SystemConfig Config { get; }
-    public ulong ProgramCounter { get; set; }
-
-    public RegisterFile Registers { get; }
-    public ControlStatusRegisters Csr { get; }
-    public IMemoryBus? Memory { get; set; }
-    public ISystemCallHandler? Host { get; set; }
-
-    public FloatingPointRegisters? FloatRegisters { get; }
-    public VectorRegisters? VectorRegisters { get; }
-
-    public MachineState(SystemConfig config)
+    public class MachineState
     {
-        Config = config;
-        // Pass config to RegisterFile so it knows whether to clamp
-        Registers = new RegisterFile(config);
-        Csr = new ControlStatusRegisters();
+        public RegisterFile Registers { get; } = new RegisterFile();
+        
+        // UPGRADE: Using your existing class name
+        public FloatingPointRegisters FRegisters { get; } = new FloatingPointRegisters(); 
+        
+        public CsrFile Csr { get; } = new CsrFile();
+        
+        public ulong ProgramCounter { get; set; }
+        public IMemoryBus? Memory { get; set; }
+        public SystemConfig Config { get; }
+        public dynamic? Host { get; set; } 
 
-        if (config.EnableFloats) FloatRegisters = new FloatingPointRegisters();
-        if (config.EnableVectors) VectorRegisters = new VectorRegisters(config.VectorLengthBits);
+        public ulong? LoadReservationAddress { get; set; } = null;
+
+        public MachineState(SystemConfig config)
+        {
+            Config = config;
+        }
     }
 }

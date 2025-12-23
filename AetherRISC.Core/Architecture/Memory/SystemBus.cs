@@ -1,62 +1,67 @@
-using System;
 using AetherRISC.Core.Abstractions.Interfaces;
+using System.Collections.Generic;
 
-namespace AetherRISC.Core.Architecture.Memory;
-
-public class SystemBus : IMemoryBus
+namespace AetherRISC.Core.Architecture.Memory
 {
-    private readonly byte[] _memory;
-
-    public SystemBus(uint size)
+    public class SystemBus : IMemoryBus
     {
-        _memory = new byte[size];
-    }
+        // Simple byte-addressable memory map for emulation
+        // Using a Dictionary for sparse storage to avoid allocating 4GB arrays
+        private readonly Dictionary<uint, byte> _memory = new Dictionary<uint, byte>();
+        private readonly uint _size;
 
-    public byte ReadByte(uint address)
-    {
-        if (address >= _memory.Length) return 0;
-        return _memory[address];
-    }
-
-    public void WriteByte(uint address, byte value)
-    {
-        if (address < _memory.Length)
+        public SystemBus(uint size)
         {
-            _memory[address] = value;
+            _size = size;
         }
-    }
 
-    // --- 32-bit Word ---
-    public uint ReadWord(uint address)
-    {
-        // Little Endian: [0] | [1]<<8 | [2]<<16 | [3]<<24
-        return (uint)(ReadByte(address) | 
-                      (ReadByte(address + 1) << 8) |
-                      (ReadByte(address + 2) << 16) |
-                      (ReadByte(address + 3) << 24));
-    }
+        // --- 8-bit ---
+        public byte ReadByte(uint address) 
+            => _memory.TryGetValue(address, out var val) ? val : (byte)0;
 
-    public void WriteWord(uint address, uint value)
-    {
-        WriteByte(address, (byte)(value & 0xFF));
-        WriteByte(address + 1, (byte)((value >> 8) & 0xFF));
-        WriteByte(address + 2, (byte)((value >> 16) & 0xFF));
-        WriteByte(address + 3, (byte)((value >> 24) & 0xFF));
-    }
+        public void WriteByte(uint address, byte value) 
+            => _memory[address] = value;
 
-    // --- 64-bit Double Word (NEW) ---
-    public ulong ReadDoubleWord(uint address)
-    {
-        // Combine two 32-bit reads
-        uint low = ReadWord(address);
-        uint high = ReadWord(address + 4);
-        return (ulong)low | ((ulong)high << 32);
-    }
+        // --- 16-bit (Little Endian) ---
+        public ushort ReadHalf(uint address)
+        {
+            byte b0 = ReadByte(address);
+            byte b1 = ReadByte(address + 1);
+            return (ushort)(b0 | (b1 << 8));
+        }
 
-    public void WriteDoubleWord(uint address, ulong value)
-    {
-        // Split into two 32-bit writes
-        WriteWord(address, (uint)(value & 0xFFFFFFFF));
-        WriteWord(address + 4, (uint)((value >> 32) & 0xFFFFFFFF));
+        public void WriteHalf(uint address, ushort value)
+        {
+            WriteByte(address, (byte)(value & 0xFF));
+            WriteByte(address + 1, (byte)((value >> 8) & 0xFF));
+        }
+
+        // --- 32-bit (Little Endian) ---
+        public uint ReadWord(uint address)
+        {
+            ushort h0 = ReadHalf(address);
+            ushort h1 = ReadHalf(address + 2);
+            return (uint)(h0 | (h1 << 16));
+        }
+
+        public void WriteWord(uint address, uint value)
+        {
+            WriteHalf(address, (ushort)(value & 0xFFFF));
+            WriteHalf(address + 2, (ushort)((value >> 16) & 0xFFFF));
+        }
+
+        // --- 64-bit (Little Endian) ---
+        public ulong ReadDouble(uint address)
+        {
+            uint w0 = ReadWord(address);
+            uint w1 = ReadWord(address + 4);
+            return (ulong)w0 | ((ulong)w1 << 32);
+        }
+
+        public void WriteDouble(uint address, ulong value)
+        {
+            WriteWord(address, (uint)(value & 0xFFFFFFFF));
+            WriteWord(address + 4, (uint)((value >> 32) & 0xFFFFFFFF));
+        }
     }
 }

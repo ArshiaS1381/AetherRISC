@@ -1,18 +1,23 @@
 using System;
 using System.Collections.Generic;
 using AetherRISC.Core.Abstractions.Interfaces;
-using AetherRISC.Core.Helpers;
 
 namespace AetherRISC.CLI;
 
 public class LabelAssembler
 {
-    private readonly List<(string label, Func<int, IInstruction> factory)> _lines = new();
+    private readonly List<(string? label, Func<int, IInstruction> factory)> _lines = new();
     private readonly Dictionary<string, int> _labels = new();
 
-    public void Add(Func<int, IInstruction> factory, string label = null)
+    public void Add(Func<int, IInstruction> factory, string? label = null)
     {
-        if (!string.IsNullOrEmpty(label)) _labels[label] = _lines.Count * 4;
+        if (!string.IsNullOrEmpty(label)) 
+        {
+            if (_labels.ContainsKey(label)) 
+                throw new InvalidOperationException($"Duplicate label definition: {label}");
+            
+            _labels[label] = _lines.Count * 4;
+        }
         _lines.Add((label, factory));
     }
 
@@ -28,7 +33,9 @@ public class LabelAssembler
 
     public int To(string label, int currentPc) 
     {
-        if (!_labels.ContainsKey(label)) return 0;
+        if (!_labels.ContainsKey(label)) 
+            throw new InvalidOperationException($"Undefined label reference: {label} at PC {currentPc}");
+        
         return _labels[label] - currentPc;
     }
 }

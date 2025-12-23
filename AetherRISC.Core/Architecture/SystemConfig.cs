@@ -1,23 +1,10 @@
-namespace AetherRISC.Core.Architecture;
-
-public enum ArchitectureMode { Rv32, Rv64 }
-
-public class SystemConfig
+namespace AetherRISC.Core.Architecture
 {
-    public ArchitectureMode Architecture { get; set; }
-    public bool EnableFloats { get; set; }
-    public bool EnableVectors { get; set; }
-    public int VectorLengthBits { get; set; }
+    public class SystemConfig
+    {
+        public int XLEN { get; set; } = 64; // 32 or 64
 
-    public static SystemConfig Rv64() => new SystemConfig 
-    { 
-        Architecture = ArchitectureMode.Rv64, 
-        EnableFloats = true 
-    };
-
-    public static SystemConfig Rv32() => new SystemConfig 
-    { 
-        Architecture = ArchitectureMode.Rv32, 
-        EnableFloats = true 
-    };
+        public static SystemConfig Rv64() => new SystemConfig { XLEN = 64 };
+        public static SystemConfig Rv32() => new SystemConfig { XLEN = 32 };
+    }
 }

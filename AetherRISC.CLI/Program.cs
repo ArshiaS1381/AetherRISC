@@ -1,187 +1,192 @@
-/*
- * Project:     AetherRISC
- * File:        Program.cs
- * Version:     2.2.0
- * Description: CLI Entry Point. Adds Architecture Switching (RV32/RV64).
- */
-
 using System;
 using System.IO;
-using System.Collections.Generic;
-using AetherRISC.Core.Architecture;
-using AetherRISC.Core.Architecture.Memory;
-using AetherRISC.Core.Architecture.Pipeline;
-using AetherRISC.Core.Hardware.ISA.Encoding;
-using AetherRISC.Core.Helpers;
-using AetherRISC.CLI;
-using AetherRISC.Core.Hardware.ISA.Base;
-using AetherRISC.Core.Abstractions.Interfaces;
+using System.Text;
+using System.Threading;
+using AetherRISC.Core.Architecture.Simulation.Runners;
 
-// --- MENU 1: ARCHITECTURE ---
-Console.Clear();
-Console.WriteLine("=== AetherRISC System Configuration ===");
-Console.WriteLine("1. RV64 (64-bit Mode) - Default");
-Console.WriteLine("2. RV32 (32-bit Mode)");
-Console.Write("Select Architecture [1-2]: ");
-var archChoice = Console.ReadLine();
-
-bool isRv32 = (archChoice == "2");
-var config = isRv32 ? SystemConfig.Rv32() : SystemConfig.Rv64();
-string archName = isRv32 ? "RV32" : "RV64";
-
-var state = new MachineState(config);
-state.Memory = new SystemBus(4096); 
-var pipeline = new PipelineController(state);
-
-// --- MENU 2: PROGRAM ---
-Console.Clear();
-Console.WriteLine($"=== AetherRISC Test Suite ({archName} Mode) ===");
-Console.WriteLine("1. Recursive Factorial (5!)");
-Console.WriteLine("2. Fibonacci Sequence (First 10)");
-Console.WriteLine("3. GCD Algorithm (105, 252)");
-Console.WriteLine("4. Array Summation (5 Elements)");
-Console.WriteLine("5. Architecture Test (Overflow Check)");
-Console.Write("Select Program [1-5]: ");
-var choice = Console.ReadLine();
-
-var asm = new LabelAssembler();
-asm.Add(pc => Inst.Jal(0, asm.To("entry", pc)));
-
-string algoName = "Unknown";
-
-switch (choice)
+namespace AetherRISC.CLI
 {
-    case "2":
-        algoName = "Fibonacci";
-        Console.WriteLine($"Loading {algoName}...");
-        asm.Add(pc => Inst.Nop(), label: "entry");
-        DemoLibrary.LoadFibonacci(asm, 10);
-        break;
-    case "3":
-        algoName = "GCD";
-        Console.WriteLine($"Loading {algoName}...");
-        asm.Add(pc => Inst.Nop(), label: "entry");
-        DemoLibrary.LoadGCD(asm, 105, 252);
-        break;
-    case "4":
-        algoName = "ArraySum";
-        Console.WriteLine($"Loading {algoName}...");
-        asm.Add(pc => Inst.Nop(), label: "entry");
-        int baseAddr = 1024;
-        
-        if (isRv32) {
-            // RV32: Write 32-bit Words (4 bytes)
-            state.Memory.WriteWord((uint)baseAddr, 10);
-            state.Memory.WriteWord((uint)baseAddr + 4, 20);
-            state.Memory.WriteWord((uint)baseAddr + 8, 30);
-            state.Memory.WriteWord((uint)baseAddr + 12, 40);
-            state.Memory.WriteWord((uint)baseAddr + 16, 50);
-            DemoLibrary.LoadArraySum32(asm, baseAddr, 5); 
-        } else {
-            // RV64: Write 64-bit DoubleWords (8 bytes)
-            state.Memory.WriteDoubleWord((uint)baseAddr, 10);
-            state.Memory.WriteDoubleWord((uint)baseAddr + 8, 20);
-            state.Memory.WriteDoubleWord((uint)baseAddr + 16, 30);
-            state.Memory.WriteDoubleWord((uint)baseAddr + 24, 40);
-            state.Memory.WriteDoubleWord((uint)baseAddr + 32, 50);
-            DemoLibrary.LoadArraySum64(asm, baseAddr, 5);
-        }
-        break;
-    case "5":
-        algoName = "OverflowTest";
-        Console.WriteLine($"Loading {algoName}...");
-        asm.Add(pc => Inst.Nop(), label: "entry");
-        DemoLibrary.LoadOverflowTest(asm);
-        break;
-    default:
-        algoName = "Factorial";
-        Console.WriteLine($"Loading {algoName}...");
-        asm.Add(pc => Inst.Nop(), label: "entry");
-        DemoLibrary.LoadFactorial(asm, 5);
-        break;
-}
-
-// Exit Block
-asm.Add(pc => Inst.Addi(17, 0, 10)); 
-asm.Add(pc => Inst.Ecall());
-
-// Assemble
-var insts = asm.Assemble();
-for(int i=0; i < insts.Count; i++) 
-    state.Memory.WriteWord((uint)(i*4), InstructionEncoder.Encode(insts[i]));
-
-// --- RUN LOOP ---
-string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-string tracePath = $"trace_{archName}_{algoName}_{timestamp}.log";
-
-using (StreamWriter writer = new StreamWriter(tracePath))
-{
-    Console.WriteLine($"\nTracing to {Path.GetFullPath(tracePath)}...");
-    
-    // Attach the Logging Host
-    state.Host = new FileLoggingHost(writer);
-
-    long cycle = 0;
-    bool autoRun = false;
-    bool isRunning = true; 
-
-    while (isRunning)
+    class Program
     {
-        // Sync running state from host
-        if (state.Host is FileLoggingHost loggingHost && !loggingHost.IsRunning) isRunning = false;
-        if (!isRunning) break;
-
-        LogState(writer, pipeline, state, cycle);
-
-        if (!autoRun || cycle % 5 == 0)
-            Visualizer.RenderPipeline(pipeline, state, cycle);
-        
-        if (!autoRun)
+        static void Main(string[] args)
         {
-            var keyInfo = Console.ReadKey(true);
-            if (keyInfo.Key == ConsoleKey.Q) break;
-            if (keyInfo.Key == ConsoleKey.A) autoRun = true;
-        }
-        else
-        {
-            if (Console.KeyAvailable)
+            Console.Title = "AetherRISC CLI";
+            Console.OutputEncoding = Encoding.UTF8;
+            ProgramLoader loader;
+
+            try { loader = new ProgramLoader("config.json"); }
+            catch (Exception ex) { Console.WriteLine($"Startup Error: {ex.Message}"); return; }
+
+            while (true)
             {
-                var keyInfo = Console.ReadKey(true);
-                if (keyInfo.Key == ConsoleKey.Q) break;
-                if (keyInfo.Key == ConsoleKey.S) autoRun = false;
+                Console.Clear();
+                DrawHeader();
+                Console.WriteLine($" Current Config: [{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [{loader.Config.SteppingMode.ToUpper()}]");
+                Console.WriteLine("----------------------------------------");
+                Console.WriteLine("  [1] Run Program");
+                Console.WriteLine("  [2] Settings");
+                Console.WriteLine("  [Q] Quit");
+                Console.WriteLine("----------------------------------------");
+                Console.Write(" Selection > ");
+
+                var key = Console.ReadKey().Key;
+                if (key == ConsoleKey.Q) break;
+                if (key == ConsoleKey.D1 || key == ConsoleKey.NumPad1) ShowProgramList(loader);
+                if (key == ConsoleKey.D2 || key == ConsoleKey.NumPad2) ShowSettings(loader);
             }
-            System.Threading.Thread.Sleep(20); 
         }
 
-        pipeline.Cycle();
-        cycle++;
-        
-        if (cycle > 5000) { 
-            Console.WriteLine("Runaway Simulation Detected!"); 
-            writer.WriteLine("[ERROR] Runaway Simulation.");
-            break; 
+        static void DrawHeader()
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("========================================");
+            Console.WriteLine("       AetherRISC Simulator v2.1");
+            Console.WriteLine("========================================");
+            Console.ResetColor();
         }
+
+        static void ShowSettings(ProgramLoader loader)
+        {
+            while(true)
+            {
+                Console.Clear();
+                DrawHeader();
+                var c = loader.Config;
+                Console.WriteLine(" Settings (Changes saved immediately)");
+                Console.WriteLine("----------------------------------------");
+                Console.WriteLine($"  [1] Architecture:   {c.Architecture.ToUpper()}");
+                Console.WriteLine($"  [2] Execution Mode: {c.ExecutionMode.ToUpper()}");
+                Console.WriteLine($"  [3] Stepping Mode:  {c.SteppingMode.ToUpper()}");
+                Console.WriteLine("  [B] Back");
+                Console.WriteLine("----------------------------------------");
+                Console.Write(" Toggle > ");
+
+                var key = Console.ReadKey(true).Key;
+                if (key == ConsoleKey.B) break;
+                
+                if (key == ConsoleKey.D1) c.Architecture = c.Architecture == "rv64" ? "rv32" : "rv64";
+                if (key == ConsoleKey.D2) c.ExecutionMode = c.ExecutionMode == "pipeline" ? "simple" : "pipeline";
+                if (key == ConsoleKey.D3) c.SteppingMode = c.SteppingMode == "auto" ? "manual" : "auto";
+                
+                loader.SaveConfig();
+            }
+        }
+
+        static void ShowProgramList(ProgramLoader loader)
+        {
+            var files = loader.GetAvailablePrograms();
+            while(true)
+            {
+                Console.Clear();
+                DrawHeader();
+                Console.WriteLine(" Select Program:");
+                if (files.Length == 0) Console.WriteLine("  (No files found)");
+                for (int i = 0; i < files.Length; i++)
+                    Console.WriteLine($"  [{i + 1}] {Path.GetFileName(files[i])}");
+                
+                Console.WriteLine("\n  [B] Back");
+                Console.Write(" > ");
+                
+                var input = Console.ReadLine();
+                if (input?.ToUpper() == "B") return;
+                
+                if (int.TryParse(input, out int id) && id > 0 && id <= files.Length)
+                {
+                    RunSimulation(loader, files[id - 1]);
+                    Console.WriteLine("\nPress any key to continue...");
+                    Console.ReadKey();
+                    return;
+                }
+            }
+        }
+
+        static void RunSimulation(ProgramLoader loader, string file)
+        {
+            using var session = loader.PrepareSession(file);
+            bool isManual = loader.Config.SteppingMode == "manual";
+            bool isPipeline = loader.Config.ExecutionMode == "pipeline";
+            
+            int cycles = 0;
+            
+            while (!session.State.Halted)
+            {
+                if (isManual)
+                {
+                    RenderUI(session, cycles, isPipeline);
+                    var k = Console.ReadKey(true).Key;
+                    if (k == ConsoleKey.Q) { session.State.Halted = true; break; }
+                    if (k == ConsoleKey.R) isManual = false; // Switch to Auto
+                }
+
+                if (isPipeline) session.PipelinedRunner?.Step(cycles);
+                else 
+                {
+                    // Simple Runner handles its own loop usually, but for stepping we assume single step ability
+                    // However, SimpleRunner.Run is a loop. We need to instantiate a new decoder or add Step to SimpleRunner.
+                    // For now, to support SimpleRunner Stepping, we would need to modify SimpleRunner.
+                    // Assuming SimpleRunner runs fully in Auto, or we just call Run(1).
+                    // Actually, SimpleRunner.Run takes maxCycles. We call Run(1) inside the loop.
+                     session.SimpleRunner?.Run(1);
+                }
+
+                cycles++;
+                if (cycles > loader.Config.MaxCycles) break;
+                
+                if (!isManual) 
+                {
+                    // In Auto mode, print progress sparingly or simple status
+                    if (cycles % 1000 == 0) { Console.Write("."); }
+                }
+            }
+            
+            RenderUI(session, cycles, isPipeline); // Final state
+            Console.WriteLine("\nExecution Halted.");
+        }
+
+        static void RenderUI(SimulationSession s, int cycle, bool isPipeline)
+        {
+            Console.Clear();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($" CYCLE: {cycle} | PC: 0x{s.State.Registers.PC:X} | STATUS: {(s.State.Halted ? "HALTED" : "RUNNING")}");
+            Console.ResetColor();
+            
+            // Draw Registers (Compact)
+            Console.WriteLine("\n [Registers]");
+            for(int i=0; i<32; i+=4)
+            {
+                Console.Write($" x{i,-2}={s.State.Registers.Read(i):X8}  ");
+                Console.Write($" x{i+1,-2}={s.State.Registers.Read(i+1):X8}  ");
+                Console.Write($" x{i+2,-2}={s.State.Registers.Read(i+2):X8}  ");
+                Console.WriteLine($" x{i+3,-2}={s.State.Registers.Read(i+3):X8}");
+            }
+
+            // Draw Pipeline if active
+            if (isPipeline && s.PipelinedRunner != null)
+            {
+                var pipe = s.PipelinedRunner.PipelineState;
+                Console.WriteLine("\n [Pipeline Stages]");
+                Console.WriteLine($" IF:  [{FormatHex(pipe.FetchDecode.Instruction)}] Stall:{pipe.FetchDecode.IsStalled}");
+                Console.WriteLine($" ID:  [{FormatHex(pipe.DecodeExecute.RawInstruction)}] {pipe.DecodeExecute.DecodedInst?.Mnemonic ?? "-"}");
+                Console.WriteLine($" EX:  [{FormatHex(pipe.ExecuteMemory.RawInstruction)}] {pipe.ExecuteMemory.DecodedInst?.Mnemonic ?? "-"}");
+                Console.WriteLine($" MEM: [{FormatHex(pipe.MemoryWriteback.RawInstruction)}] {pipe.MemoryWriteback.DecodedInst?.Mnemonic ?? "-"}");
+                Console.WriteLine($" WB:  RegWrite:{pipe.MemoryWriteback.RegWrite} Rd:{pipe.MemoryWriteback.Rd} Val:{pipe.MemoryWriteback.FinalResult:X}");
+            }
+
+            // Draw ECALL Output
+            Console.WriteLine("\n [Console Output]");
+            Console.BackgroundColor = ConsoleColor.DarkBlue;
+            Console.ForegroundColor = ConsoleColor.White;
+            string output = s.OutputBuffer.ToString();
+            // Show last 5 lines
+            var lines = output.Split('\n');
+            int start = Math.Max(0, lines.Length - 5);
+            for(int i=start; i<lines.Length; i++) 
+                Console.WriteLine(" " + lines[i].TrimEnd().PadRight(Console.WindowWidth - 2));
+            Console.ResetColor();
+
+            Console.WriteLine("\n [Controls] Enter: Step | R: Run All | Q: Quit");
+        }
+
+        static string FormatHex(uint val) => val == 0 ? "        " : $"{val:X8}";
     }
 }
-
-Console.WriteLine("Simulation Halted.");
-
-void LogState(StreamWriter w, PipelineController p, MachineState s, long c)
-{
-    w.WriteLine($"--- CYCLE {c} ---");
-    w.WriteLine($"IF : PC={p.IfId.PC:X4} | Inst={p.IfId.Instruction:X8}");
-    w.WriteLine($"ID : Inst={(p.IdEx.DecodedInst?.Mnemonic ?? "BUBBLE")} | Rd={p.IdEx.Rd}");
-    w.WriteLine($"EX : Inst={(p.ExMem.DecodedInst?.Mnemonic ?? "BUBBLE")} | AluRes={p.ExMem.AluResult:X}");
-    w.WriteLine($"MEM: Inst={(p.MemWb.DecodedInst?.Mnemonic ?? "BUBBLE")} | Final={p.MemWb.FinalResult:X}");
-    w.WriteLine($"WB : RegWrite={p.MemWb.RegWrite}");
-    w.WriteLine("REGS:");
-    for (int i = 0; i < 32; i += 8)
-    {
-        w.Write($"  x{i:D2}-x{i+7:D2}: ");
-        for(int j=0; j<8; j++) w.Write($"{s.Registers.Read(i+j):X} ");
-        w.WriteLine();
-    }
-    w.WriteLine("");
-    w.Flush();
-}
-

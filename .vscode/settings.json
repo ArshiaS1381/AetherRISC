@@ -1,0 +1,22 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/AetherRISC.Desktop": true,
+        "**/AetherRISC.UI": true,
+        "**/AetherRISC.Web": true,
+        "AetherRISC.Core/obj": true,
+        "AetherRISC.Core/bin": true,
+        "AetherRISC.Generators\\bin/Debug": true,
+        "AetherRISC.Generators/obj": true,
+        "AetherRISC.Generators/bin": true,
+        "AetherRISC.Core.Tests/obj": true,
+        "AetherRISC.Core.Tests/bin": true,
+        "AetherRISC.CLI/obj": true,
+        "**/AetherRISC.Core.Tests": true
+    },
+    "explorerExclude.backup": {}
+}

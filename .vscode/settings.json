@@ -15,8 +15,7 @@
         "AetherRISC.Generators/bin": true,
         "AetherRISC.Core.Tests/obj": true,
         "AetherRISC.Core.Tests/bin": true,
-        "AetherRISC.CLI/obj": true,
-        "**/AetherRISC.Core.Tests": true
+        "AetherRISC.CLI/obj": true
     },
     "explorerExclude.backup": {}
 }

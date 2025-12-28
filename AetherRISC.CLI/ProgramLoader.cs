@@ -4,10 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using AetherRISC.Core.Architecture.Simulation.State;
-using AetherRISC.Core.Architecture.Simulation; // Fixed: Added for MultiOSHandler
+using AetherRISC.Core.Architecture.Simulation;
 using AetherRISC.Core.Architecture.Hardware.Memory;
 using AetherRISC.Core.Helpers;
 using AetherRISC.Core.Architecture.Simulation.Runners;
+using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.CLI
 {
@@ -62,22 +63,30 @@ namespace AetherRISC.CLI
             var state = new MachineState(sysConfig);
             state.Memory = new SystemBus(Config.MemorySize);
             
-            // Capture Output
             var outBuffer = new StringWriter();
             var host = new MultiOSHandler { Kind = OSKind.RARS, Silent = false, Output = outBuffer };
             state.Host = host;
 
-            // Assemble
             string sourceCode = File.ReadAllText(filePath);
             var assembler = new SourceAssembler(sourceCode) { TextBase = 0 };
             assembler.Assemble(state); 
             
-            // Logging
-            var logDir = Path.Combine(_baseDir, Config.LogsDirectory);
-            if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
-            string logPath = Path.Combine(logDir, $"{Path.GetFileNameWithoutExtension(filePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.log");
-            var logger = new FileLogger(logPath, consoleEcho: false);
-            logger.Initialize(Path.GetFileName(filePath));
+            // --- Logging Selection ---
+            ISimulationLogger logger;
+            if (Config.EnableLogging)
+            {
+                var logDir = Path.Combine(_baseDir, Config.LogsDirectory);
+                if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
+                string logPath = Path.Combine(logDir, $"{Path.GetFileNameWithoutExtension(filePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.log");
+                
+                var fileLogger = new FileLogger(logPath, consoleEcho: false);
+                fileLogger.Initialize(Path.GetFileName(filePath));
+                logger = fileLogger;
+            }
+            else
+            {
+                logger = new NullLogger();
+            }
 
             var session = new SimulationSession
             {

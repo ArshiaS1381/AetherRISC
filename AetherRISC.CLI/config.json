@@ -2,8 +2,9 @@
   "programs_directory": "programs",
   "logs_directory": "logs",
   "memory_size": 1048576,
-  "max_cycles": 1000000000,
+  "max_cycles": 1000000,
   "execution_mode": "pipeline",
   "architecture": "rv64",
-  "stepping_mode": "manual"
+  "stepping_mode": "manual",
+  "enable_logging": true
 }

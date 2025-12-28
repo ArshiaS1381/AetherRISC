@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
+using AetherRISC.CLI;
 using AetherRISC.Core.Architecture.Simulation.Runners;
 
 namespace AetherRISC.CLI
@@ -21,7 +23,7 @@ namespace AetherRISC.CLI
             {
                 Console.Clear();
                 DrawHeader();
-                Console.WriteLine($" Current Config: [{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [{loader.Config.SteppingMode.ToUpper()}]");
+                Console.WriteLine($" Config: [{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [{loader.Config.SteppingMode.ToUpper()}] [Log:{(loader.Config.EnableLogging?"ON":"OFF")}]");
                 Console.WriteLine("----------------------------------------");
                 Console.WriteLine("  [1] Run Program");
                 Console.WriteLine("  [2] Settings");
@@ -52,11 +54,12 @@ namespace AetherRISC.CLI
                 Console.Clear();
                 DrawHeader();
                 var c = loader.Config;
-                Console.WriteLine(" Settings (Changes saved immediately)");
+                Console.WriteLine(" Settings");
                 Console.WriteLine("----------------------------------------");
                 Console.WriteLine($"  [1] Architecture:   {c.Architecture.ToUpper()}");
                 Console.WriteLine($"  [2] Execution Mode: {c.ExecutionMode.ToUpper()}");
                 Console.WriteLine($"  [3] Stepping Mode:  {c.SteppingMode.ToUpper()}");
+                Console.WriteLine($"  [4] Logging:        {(c.EnableLogging ? "ENABLED" : "DISABLED")}");
                 Console.WriteLine("  [B] Back");
                 Console.WriteLine("----------------------------------------");
                 Console.Write(" Toggle > ");
@@ -67,6 +70,7 @@ namespace AetherRISC.CLI
                 if (key == ConsoleKey.D1) c.Architecture = c.Architecture == "rv64" ? "rv32" : "rv64";
                 if (key == ConsoleKey.D2) c.ExecutionMode = c.ExecutionMode == "pipeline" ? "simple" : "pipeline";
                 if (key == ConsoleKey.D3) c.SteppingMode = c.SteppingMode == "auto" ? "manual" : "auto";
+                if (key == ConsoleKey.D4) c.EnableLogging = !c.EnableLogging;
                 
                 loader.SaveConfig();
             }
@@ -107,47 +111,57 @@ namespace AetherRISC.CLI
             bool isPipeline = loader.Config.ExecutionMode == "pipeline";
             
             int cycles = 0;
-            
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
+
             while (!session.State.Halted)
             {
                 if (isManual)
                 {
-                    RenderUI(session, cycles, isPipeline);
+                    sw.Stop(); // Pause timer while user thinks
+                    RenderUI(session, cycles, isPipeline, sw.Elapsed);
                     var k = Console.ReadKey(true).Key;
+                    sw.Start(); // Resume
+
                     if (k == ConsoleKey.Q) { session.State.Halted = true; break; }
-                    if (k == ConsoleKey.R) isManual = false; // Switch to Auto
+                    if (k == ConsoleKey.R) isManual = false; 
                 }
 
                 if (isPipeline) session.PipelinedRunner?.Step(cycles);
-                else 
-                {
-                    // Simple Runner handles its own loop usually, but for stepping we assume single step ability
-                    // However, SimpleRunner.Run is a loop. We need to instantiate a new decoder or add Step to SimpleRunner.
-                    // For now, to support SimpleRunner Stepping, we would need to modify SimpleRunner.
-                    // Assuming SimpleRunner runs fully in Auto, or we just call Run(1).
-                    // Actually, SimpleRunner.Run takes maxCycles. We call Run(1) inside the loop.
-                     session.SimpleRunner?.Run(1);
-                }
+                else session.SimpleRunner?.Run(1);
 
                 cycles++;
                 if (cycles > loader.Config.MaxCycles) break;
                 
                 if (!isManual) 
                 {
-                    // In Auto mode, print progress sparingly or simple status
-                    if (cycles % 1000 == 0) { Console.Write("."); }
+                    if (cycles % 5000 == 0) Console.Write(".");
                 }
             }
+            sw.Stop();
             
-            RenderUI(session, cycles, isPipeline); // Final state
-            Console.WriteLine("\nExecution Halted.");
+            RenderUI(session, cycles, isPipeline, sw.Elapsed); // Final state
+            
+            // Performance Report
+            Console.WriteLine("\n\n----------------------------------------");
+            Console.WriteLine(" Execution Report");
+            Console.WriteLine("----------------------------------------");
+            Console.WriteLine($" Status:       {(session.State.Halted ? "HALTED" : "TIMEOUT")}");
+            Console.WriteLine($" Total Cycles: {cycles:N0}");
+            Console.WriteLine($" Time Elapsed: {sw.Elapsed.TotalSeconds:F4} seconds");
+            
+            if (sw.Elapsed.TotalSeconds > 0.001)
+            {
+                double khz = (cycles / sw.Elapsed.TotalSeconds) / 1000.0;
+                Console.WriteLine($" Avg Speed:    {khz:F2} KHz");
+            }
         }
 
-        static void RenderUI(SimulationSession s, int cycle, bool isPipeline)
+        static void RenderUI(SimulationSession s, int cycle, bool isPipeline, TimeSpan elapsed)
         {
             Console.Clear();
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($" CYCLE: {cycle} | PC: 0x{s.State.Registers.PC:X} | STATUS: {(s.State.Halted ? "HALTED" : "RUNNING")}");
+            Console.WriteLine($" CYCLE: {cycle} | PC: 0x{s.State.Registers.PC:X} | TIME: {elapsed.TotalSeconds:F2}s");
             Console.ResetColor();
             
             // Draw Registers (Compact)

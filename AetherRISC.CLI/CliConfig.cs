@@ -16,16 +16,16 @@ namespace AetherRISC.CLI
         [JsonPropertyName("max_cycles")]
         public int MaxCycles { get; set; } = 100000;
 
-        // Options: "simple", "pipeline"
         [JsonPropertyName("execution_mode")]
         public string ExecutionMode { get; set; } = "simple";
 
-        // Options: "rv32", "rv64"
         [JsonPropertyName("architecture")]
         public string Architecture { get; set; } = "rv64";
 
-        // Options: "auto", "manual"
         [JsonPropertyName("stepping_mode")]
         public string SteppingMode { get; set; } = "auto";
+        
+        [JsonPropertyName("enable_logging")]
+        public bool EnableLogging { get; set; } = true;
     }
 }

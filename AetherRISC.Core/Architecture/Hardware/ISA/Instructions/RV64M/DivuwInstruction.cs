@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64M;
 
 [RiscvInstruction("DIVUW", InstructionSet.RV64M, RiscvEncodingType.R, 0x3B, Funct3 = 5, Funct7 = 1,
@@ -14,16 +16,13 @@ public class DivuwInstruction : RTypeInstruction
     {
         uint v1 = (uint)s.Registers.Read(d.Rs1);
         uint v2 = (uint)s.Registers.Read(d.Rs2);
+        s.Registers.Write(d.Rd, v2 == 0 ? ulong.MaxValue : (ulong)(long)(int)(v1 / v2));
+    }
 
-        if (v2 == 0)
-        {
-            s.Registers.Write(d.Rd, ulong.MaxValue);
-        }
-        else
-        {
-            s.Registers.Write(d.Rd, (ulong)(long)(int)(v1 / v2));
-        }
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        uint v1 = (uint)rs1Val;
+        uint v2 = (uint)rs2Val;
+        buffers.ExecuteMemory.AluResult = v2 == 0 ? ulong.MaxValue : (ulong)(long)(int)(v1 / v2);
     }
 }
-
-

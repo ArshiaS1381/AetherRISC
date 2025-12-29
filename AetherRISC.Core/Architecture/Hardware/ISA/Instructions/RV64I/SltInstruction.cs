@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("SLT", InstructionSet.RV64I, RiscvEncodingType.R, 0x33, Funct3 = 2, Funct7 = 0,
@@ -13,5 +15,10 @@ public class SltInstruction : RTypeInstruction
     public override void Execute(MachineState s, InstructionData d)
     {
         s.Registers.Write(d.Rd, (long)s.Registers.Read(d.Rs1) < (long)s.Registers.Read(d.Rs2) ? 1ul : 0ul);
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        buffers.ExecuteMemory.AluResult = (long)rs1Val < (long)rs2Val ? 1ul : 0ul;
     }
 }

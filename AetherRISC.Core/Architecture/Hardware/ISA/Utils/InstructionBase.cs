@@ -1,7 +1,9 @@
+using System;
 using System.Linq;
 using System.Reflection;
 using AetherRISC.Core.Abstractions.Interfaces;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
 
 namespace AetherRISC.Core.Architecture.Hardware.ISA;
 
@@ -18,6 +20,12 @@ public abstract class Instruction : IInstruction
     public virtual bool IsJump => false;
 
     public abstract void Execute(MachineState state, InstructionData data);
+
+    public virtual void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        // Safety valve: Ensure developers implement the fast path.
+        throw new NotImplementedException($"Optimization missing: Instruction '{this.GetType().Name}' does not override Compute().");
+    }
 
     private RiscvInstructionAttribute? GetAttr() => 
         GetType().GetCustomAttributes<RiscvInstructionAttribute>().FirstOrDefault();

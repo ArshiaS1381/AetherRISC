@@ -1,6 +1,5 @@
 using System;
 using AetherRISC.Core.Abstractions.Interfaces;
-using AetherRISC.Core.Architecture.Hardware.ISA;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline
 {
@@ -24,6 +23,10 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline
     {
         public uint Instruction { get; set; }
         public ulong PC { get; set; }
+        
+        public bool PredictedTaken { get; set; }
+        public ulong PredictedTarget { get; set; }
+
         public bool IsStalled { get; set; }
         public bool IsValid { get; set; } = false;
         public bool IsEmpty { get; set; } = true;
@@ -32,6 +35,8 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline
         {
             Instruction = 0;
             PC = 0;
+            PredictedTaken = false;
+            PredictedTarget = 0;
             IsStalled = false;
             IsValid = false;
             IsEmpty = true;
@@ -44,6 +49,9 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline
         public uint RawInstruction { get; set; }
         public ulong PC { get; set; }
         
+        public bool PredictedTaken { get; set; }
+        public ulong PredictedTarget { get; set; }
+
         public int Rd { get; set; }
         public int Immediate { get; set; }
         
@@ -61,6 +69,8 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline
             DecodedInst = null;
             RawInstruction = 0;
             PC = 0;
+            PredictedTaken = false;
+            PredictedTarget = 0;
             Rd = 0;
             Immediate = 0;
             RegWrite = false;
@@ -86,8 +96,14 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline
         public bool MemRead { get; set; }
         public bool MemWrite { get; set; }
         
-        // CRITICAL FIX: This field must exist and be cleared in Flush()
         public bool BranchTaken { get; set; } 
+        
+        public bool Misprediction { get; set; }
+        public ulong CorrectTarget { get; set; }
+        
+        // --- NEW: For Predictor Update ---
+        public ulong ActualTarget { get; set; }
+        // ---------------------------------
 
         public bool IsEmpty { get; set; } = true;
 
@@ -102,7 +118,10 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline
             RegWrite = false;
             MemRead = false;
             MemWrite = false;
-            BranchTaken = false; // FIX: Reset signal to prevent loops
+            BranchTaken = false;
+            Misprediction = false;
+            CorrectTarget = 0;
+            ActualTarget = 0;
             IsEmpty = true;
         }
     }

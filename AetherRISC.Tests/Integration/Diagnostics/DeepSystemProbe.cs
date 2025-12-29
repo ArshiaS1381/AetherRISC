@@ -2,7 +2,7 @@ using Xunit;
 using Xunit.Abstractions;
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Tests.Infrastructure;
-using AetherRISC.Tests.Unit.Pipeline; // <-- FIXED: Added missing namespace
+using AetherRISC.Tests.Unit.Pipeline;
 using System.Collections.Generic;
 
 namespace AetherRISC.Tests.Integration.Diagnostics;
@@ -15,25 +15,15 @@ public class DeepSystemProbe : PipelineTestFixture
     [Fact]
     public void Probe_Ble_Pseudo_Logic()
     {
-        // REWRITE: Use text assembly to test the Pseudo Expansion logic properly.
-        // Inst.Ble() does not exist because it is a pseudo-op.
-        
         var source = @"
             .text
             li x1, 5
             li x2, 3
-            
-            # BLE 5, 3, target
-            # 5 <= 3 is False. Should NOT take branch.
             ble x1, x2, target 
-            
-            # Success path
             li x3, 1
             j end
-            
             target:
-            li x3, 0   # Fail path
-            
+            li x3, 0
             end:
             ebreak
         ";
@@ -46,24 +36,23 @@ public class DeepSystemProbe : PipelineTestFixture
         Cycle(20);
 
         if (Machine.Registers.Read(3) == 0)
-        {
-             _output.WriteLine("CRITICAL FAILURE: BLE logic is inverted! (5 <= 3 evaluated as True)");
-        }
+             _output.WriteLine("CRITICAL FAILURE: BLE logic is inverted!");
         Assert.Equal(1ul, Machine.Registers.Read(3));
     }
 
     [Fact]
     public void Probe_Data_Alignment()
     {
+        // Use LWU for DEADBEEF
         var source = @"
             .data
             .byte 0xFF
-            .align 2        # Should align to next 4-byte boundary
+            .align 2
             target: .word 0xDEADBEEF
             
             .text
             la x1, target
-            lw x2, 0(x1)
+            lwu x2, 0(x1)
             ebreak
         ";
 
@@ -92,30 +81,20 @@ public class DeepSystemProbe : PipelineTestFixture
         Machine.Memory.WriteWord(0x104, 20);
         Machine.Registers.Write(1, 0x100);
 
-        // 1. LW x2, 0(x1)
         Assembler.Add(pc => Inst.Lw(2, 1, 0));
-        // 2. LW x3, 4(x1)
         Assembler.Add(pc => Inst.Lw(3, 1, 4));
-        // 3. BEQ x2, x3, Target (Reads x2, x3). Needs Stall for x3!
         Assembler.Add(pc => Inst.Beq(2, 3, 8));
-        
-        Assembler.Add(pc => Inst.Addi(4, 0, 1)); // Fallthrough
+        Assembler.Add(pc => Inst.Addi(4, 0, 1)); 
         Assembler.Add(pc => Inst.Ebreak(0, 0, 1));
 
         LoadProgram();
 
-        Cycle(1); // Fetch LW1
-        Cycle(1); // Dec LW1
-        Cycle(1); // Ex LW1 (LW2 in Dec)
-        Cycle(1); // Mem LW1, Ex LW2, Dec BEQ -> HAZARD POINT
+        Cycle(4); // HAZARD POINT
         
         var decBuf = Pipeline.Buffers.DecodeExecute;
         var ifId = Pipeline.Buffers.FetchDecode;
 
-        _output.WriteLine($"[Cycle 4] Dec->Ex IsEmpty? {decBuf.IsEmpty}");
-        _output.WriteLine($"[Cycle 4] IF->Dec Stalled? {ifId.IsStalled}");
-
-        Assert.True(decBuf.IsEmpty, "Pipeline failed to insert Bubble in Cycle 4 (Dec->Ex should be empty)");
+        Assert.True(decBuf.IsEmpty, "Pipeline failed to insert Bubble in Cycle 4");
         Assert.True(ifId.IsStalled, "Pipeline failed to Stall Fetch in Cycle 4");
     }
 

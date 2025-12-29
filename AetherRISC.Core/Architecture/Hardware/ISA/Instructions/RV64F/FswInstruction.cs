@@ -1,6 +1,8 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using System;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64F;
 
 [RiscvInstruction("FSW", InstructionSet.RV64F, RiscvEncodingType.S, 0x27, Funct3 = 2,
@@ -15,7 +17,15 @@ public class FswInstruction : STypeInstruction
     {
         uint addr = (uint)((long)s.Registers.Read(d.Rs1) + (long)(int)d.Immediate);
         float val = s.FRegisters.ReadSingle(d.Rs2);
-        uint bits = unchecked((uint)BitConverter.SingleToInt32Bits(val));
-        s.Memory!.WriteWord(addr, bits);
+        s.Memory!.WriteWord(addr, unchecked((uint)BitConverter.SingleToInt32Bits(val)));
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        // Pipeline: Calculate Address in AluResult
+        buffers.ExecuteMemory.AluResult = (ulong)((long)rs1Val + (long)buffers.DecodeExecute.Immediate);
+        // Store Value from FRegister rs2
+        float val = state.FRegisters.ReadSingle(this.Rs2);
+        buffers.ExecuteMemory.StoreValue = unchecked((uint)BitConverter.SingleToInt32Bits(val));
     }
 }

@@ -14,7 +14,7 @@ namespace AetherRISC.CLI
 {
     public class ProgramLoader
     {
-        public CliConfig Config { get; private set; }
+        public CliConfig Config { get; private set; } = new CliConfig();
         private readonly string _baseDir;
         private readonly string _configPath;
 
@@ -71,15 +71,14 @@ namespace AetherRISC.CLI
             var assembler = new SourceAssembler(sourceCode) { TextBase = 0 };
             assembler.Assemble(state); 
             
-            // --- Logging Selection ---
             ISimulationLogger logger;
-            if (Config.EnableLogging)
+            if (Config.LogLevel != SimulationLogLevel.None)
             {
                 var logDir = Path.Combine(_baseDir, Config.LogsDirectory);
                 if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
                 string logPath = Path.Combine(logDir, $"{Path.GetFileNameWithoutExtension(filePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.log");
                 
-                var fileLogger = new FileLogger(logPath, consoleEcho: false);
+                var fileLogger = new FileLogger(logPath, Config.LogLevel);
                 fileLogger.Initialize(Path.GetFileName(filePath));
                 logger = fileLogger;
             }
@@ -96,7 +95,8 @@ namespace AetherRISC.CLI
             };
 
             if (Config.ExecutionMode.Equals("pipeline", StringComparison.OrdinalIgnoreCase))
-                session.PipelinedRunner = new PipelinedRunner(state, logger);
+                // PASSING THE CONFIG VALUE HERE
+                session.PipelinedRunner = new PipelinedRunner(state, logger, Config.BranchPredictor);
             else
                 session.SimpleRunner = new SimpleRunner(state, logger);
 

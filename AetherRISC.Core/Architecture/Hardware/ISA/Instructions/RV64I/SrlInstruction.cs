@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("SRL", InstructionSet.RV64I, RiscvEncodingType.R, 0x33, Funct3 = 5, Funct7 = 0x00,
@@ -18,5 +20,14 @@ public class SrlInstruction : RTypeInstruction
         
         if (s.Config.XLEN == 32) res = (ulong)(uint)res;
         s.Registers.Write(d.Rd, res);
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        int shamtMask = (state.Config.XLEN == 32) ? 0x1F : 0x3F;
+        int shamt = (int)rs2Val & shamtMask;
+        ulong res = rs1Val >> shamt;
+        if (state.Config.XLEN == 32) res = (ulong)(uint)res;
+        buffers.ExecuteMemory.AluResult = res;
     }
 }

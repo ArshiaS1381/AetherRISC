@@ -1,6 +1,8 @@
 using System;
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64A;
 
 [RiscvInstruction("AMOMIN.W", InstructionSet.RV64A, RiscvEncodingType.R, 0x2F, Funct3 = 2, Funct7 = 0x10)]
@@ -14,6 +16,7 @@ public class AmoMinWInstruction : RTypeInstruction
         s.Registers.Write(d.Rd, (ulong)(long)mem);
         s.Memory.WriteWord(addr, (uint)Math.Min(mem, val));
     }
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers) { buffers.ExecuteMemory.AluResult = rs1Val; buffers.ExecuteMemory.StoreValue = rs2Val; }
 }
 
 [RiscvInstruction("AMOMAX.W", InstructionSet.RV64A, RiscvEncodingType.R, 0x2F, Funct3 = 2, Funct7 = 0x14)]
@@ -27,6 +30,7 @@ public class AmoMaxWInstruction : RTypeInstruction
         s.Registers.Write(d.Rd, (ulong)(long)mem);
         s.Memory.WriteWord(addr, (uint)Math.Max(mem, val));
     }
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers) { buffers.ExecuteMemory.AluResult = rs1Val; buffers.ExecuteMemory.StoreValue = rs2Val; }
 }
 
 [RiscvInstruction("AMOMIN.D", InstructionSet.RV64A, RiscvEncodingType.R, 0x2F, Funct3 = 3, Funct7 = 0x10)]
@@ -40,6 +44,7 @@ public class AmoMinDInstruction : RTypeInstruction
         s.Registers.Write(d.Rd, (ulong)mem);
         s.Memory.WriteDouble(addr, (ulong)Math.Min(mem, val));
     }
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers) { buffers.ExecuteMemory.AluResult = rs1Val; buffers.ExecuteMemory.StoreValue = rs2Val; }
 }
 
 [RiscvInstruction("AMOMAX.D", InstructionSet.RV64A, RiscvEncodingType.R, 0x2F, Funct3 = 3, Funct7 = 0x14)]
@@ -53,4 +58,5 @@ public class AmoMaxDInstruction : RTypeInstruction
         s.Registers.Write(d.Rd, (ulong)mem);
         s.Memory.WriteDouble(addr, (ulong)Math.Max(mem, val));
     }
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers) { buffers.ExecuteMemory.AluResult = rs1Val; buffers.ExecuteMemory.StoreValue = rs2Val; }
 }

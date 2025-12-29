@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("SRLI", InstructionSet.RV64I, RiscvEncodingType.ShiftImm, 0x13, Funct3 = 5, Funct6 = 0x00,
@@ -12,7 +14,12 @@ public class SrliInstruction : ITypeInstruction
 
     public override void Execute(MachineState s, InstructionData d)
     {
-        // Shift amount is encoded in the lower bits of the immediate field.
         s.Registers.Write(d.Rd, s.Registers.Read(d.Rs1) >> (int)(d.Immediate & 0x3F));
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        int shamt = buffers.DecodeExecute.Immediate & 0x3F;
+        buffers.ExecuteMemory.AluResult = rs1Val >> shamt;
     }
 }

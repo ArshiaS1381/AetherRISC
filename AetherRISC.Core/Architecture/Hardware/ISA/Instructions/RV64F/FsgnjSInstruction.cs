@@ -1,6 +1,8 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using System;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64F;
 
 [RiscvInstruction("FSGNJ.S", InstructionSet.RV64F, RiscvEncodingType.R, 0x53, Funct3 = 0, Funct7 = 0x10,
@@ -17,5 +19,13 @@ public class FsgnjSInstruction : RTypeInstruction
         uint b2 = BitConverter.SingleToUInt32Bits(s.FRegisters.ReadSingle(d.Rs2));
         uint res = (b1 & 0x7FFFFFFF) | (b2 & 0x80000000);
         s.FRegisters.WriteSingle(d.Rd, BitConverter.UInt32BitsToSingle(res));
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        uint b1 = BitConverter.SingleToUInt32Bits(state.FRegisters.ReadSingle(this.Rs1));
+        uint b2 = BitConverter.SingleToUInt32Bits(state.FRegisters.ReadSingle(this.Rs2));
+        uint res = (b1 & 0x7FFFFFFF) | (b2 & 0x80000000);
+        buffers.ExecuteMemory.AluResult = 0xFFFFFFFF00000000 | res;
     }
 }

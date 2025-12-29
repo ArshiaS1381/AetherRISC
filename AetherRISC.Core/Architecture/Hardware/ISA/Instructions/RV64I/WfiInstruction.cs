@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("WFI", InstructionSet.RV64I, RiscvEncodingType.R, 0x73, Funct3 = 0, Funct7 = 0x08,
@@ -8,10 +10,15 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
     Usage = "wfi")]
 public class WfiInstruction : RTypeInstruction 
 {
-    // WFI is encoded as R-type with rs2 = 5
     public override int Rs2 => 5;
 
     public WfiInstruction(int rd, int rs1, int rs2) : base(rd, rs1, rs2) { }
 
-    public override void Execute(MachineState s, InstructionData d) { /* Sleep logic placeholder */ }
+    public override void Execute(MachineState s, InstructionData d) { }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        // No-Op in simulation
+        buffers.ExecuteMemory.AluResult = 0;
+    }
 }

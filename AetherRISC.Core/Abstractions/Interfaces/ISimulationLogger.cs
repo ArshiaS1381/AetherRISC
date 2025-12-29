@@ -4,13 +4,15 @@ namespace AetherRISC.Core.Abstractions.Interfaces
 {
     public interface ISimulationLogger
     {
+        // Hints for the Runner to avoid expensive string formatting
+        bool IsVerbose { get; } 
+
         void Initialize(string programName);
         void FinalizeSession();
 
         void BeginCycle(int cycle);
         void CompleteCycle();
 
-        // Generic Log Method
         void Log(string component, string message);
 
         void LogStageFetch(ulong pc, uint raw);

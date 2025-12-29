@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("SLL", InstructionSet.RV64I, RiscvEncodingType.R, 0x33, Funct3 = 1, Funct7 = 0,
@@ -14,11 +16,17 @@ public class SllInstruction : RTypeInstruction
     {
         int shiftMask = (s.Config.XLEN == 32) ? 0x1F : 0x3F;
         int shamt = (int)s.Registers.Read(d.Rs2) & shiftMask;
-        
-        ulong val = s.Registers.Read(d.Rs1);
-        ulong res = val << shamt;
-        
+        ulong res = s.Registers.Read(d.Rs1) << shamt;
         if (s.Config.XLEN == 32) res = (ulong)(uint)res;
         s.Registers.Write(d.Rd, res);
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        int shiftMask = (state.Config.XLEN == 32) ? 0x1F : 0x3F;
+        int shamt = (int)rs2Val & shiftMask;
+        ulong res = rs1Val << shamt;
+        if (state.Config.XLEN == 32) res = (ulong)(uint)res;
+        buffers.ExecuteMemory.AluResult = res;
     }
 }

@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Extensions.B.Zbs;
 
 [RiscvInstruction("BINV", InstructionSet.Zbs, RiscvEncodingType.R, 0x33, Funct3 = 1, Funct7 = 0x34,
@@ -9,8 +11,15 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Extensions.B.Zbs;
 public class BinvInstruction : RTypeInstruction
 {
     public BinvInstruction(int rd, int rs1, int rs2) : base(rd, rs1, rs2) { }
+    
     public override void Execute(MachineState s, InstructionData d) =>
         s.Registers.Write(d.Rd, s.Registers.Read(d.Rs1) ^ (1UL << (int)(s.Registers.Read(d.Rs2) & (s.Config.XLEN == 32 ? 31u : 63u))));
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        int bit = (int)(rs2Val & (state.Config.XLEN == 32 ? 31u : 63u));
+        buffers.ExecuteMemory.AluResult = rs1Val ^ (1UL << bit);
+    }
 }
 
 [RiscvInstruction("BINVI", InstructionSet.Zbs, RiscvEncodingType.ShiftImm, 0x13, Funct3 = 1, Funct6 = 0x1A,
@@ -20,7 +29,14 @@ public class BinvInstruction : RTypeInstruction
 public class BinviInstruction : ITypeInstruction
 {
     public BinviInstruction(int rd, int rs1, int imm) : base(rd, rs1, imm) { }
+    
     public override void Execute(MachineState s, InstructionData d) =>
         s.Registers.Write(d.Rd, s.Registers.Read(d.Rs1) ^ (1UL << (d.Imm & (s.Config.XLEN == 32 ? 31 : 63))));
-}
 
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        int imm = buffers.DecodeExecute.Immediate;
+        int bit = imm & (state.Config.XLEN == 32 ? 31 : 63);
+        buffers.ExecuteMemory.AluResult = rs1Val ^ (1UL << bit);
+    }
+}

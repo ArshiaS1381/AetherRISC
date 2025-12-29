@@ -1,6 +1,8 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using System;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64D;
 
 [RiscvInstruction("FCLASS.D", InstructionSet.RV64D, RiscvEncodingType.R, 0x53, Funct3 = 1, Funct7 = 0x71,
@@ -13,23 +15,30 @@ public class FclassDInstruction : RTypeInstruction
 
     public override void Execute(MachineState s, InstructionData d)
     {
-        double val = s.FRegisters.ReadDouble(d.Rs1);
+        s.Registers.Write(d.Rd, Classify(s.FRegisters.ReadDouble(d.Rs1)));
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        double val = state.FRegisters.ReadDouble(this.Rs1);
+        buffers.ExecuteMemory.AluResult = Classify(val);
+    }
+
+    private uint Classify(double val)
+    {
         ulong bits = BitConverter.DoubleToUInt64Bits(val);
-        
         bool isNeg = (bits >> 63) != 0;
         int exponent = (int)((bits >> 52) & 0x7FF);
         ulong fraction = bits & 0xFFFFFFFFFFFFF;
 
-        uint mask = 0;
         if (exponent == 0x7FF) {
-            if (fraction == 0) mask = isNeg ? 1u << 0 : 1u << 7; // -Inf / +Inf
-            else mask = ((fraction & 0x8000000000000) != 0) ? 1u << 9 : 1u << 8; // sNaN / qNaN
-        } else if (exponent == 0) {
-            if (fraction == 0) mask = isNeg ? 1u << 3 : 1u << 4; // -0 / +0
-            else mask = isNeg ? 1u << 2 : 1u << 5; // -Subnormal / +Subnormal
-        } else {
-            mask = isNeg ? 1u << 1 : 1u << 6; // -Normal / +Normal
+            if (fraction == 0) return isNeg ? 1u << 0 : 1u << 7; 
+            return ((fraction & 0x8000000000000) != 0) ? 1u << 9 : 1u << 8; 
         }
-        s.Registers.Write(d.Rd, mask);
+        if (exponent == 0) {
+            if (fraction == 0) return isNeg ? 1u << 3 : 1u << 4; 
+            return isNeg ? 1u << 2 : 1u << 5; 
+        }
+        return isNeg ? 1u << 1 : 1u << 6;
     }
 }

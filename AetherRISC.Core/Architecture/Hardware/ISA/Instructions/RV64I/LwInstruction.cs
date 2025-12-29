@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("LW", InstructionSet.RV64I, RiscvEncodingType.I, 0x03, Funct3 = 2,
@@ -16,8 +18,11 @@ public class LwInstruction : ITypeInstruction
     {
         uint addr = (uint)((long)s.Registers.Read(d.Rs1) + (long)(int)d.Immediate);
         uint val = s.Memory!.ReadWord(addr);
-        
-        // LW sign-extends the 32-bit loaded value to 64-bit XLEN
         s.Registers.Write(d.Rd, (ulong)(int)val);
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        buffers.ExecuteMemory.AluResult = (ulong)((long)rs1Val + (long)buffers.DecodeExecute.Immediate);
     }
 }

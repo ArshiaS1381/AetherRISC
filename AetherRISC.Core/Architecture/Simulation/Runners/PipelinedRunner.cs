@@ -14,18 +14,17 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
         private readonly PipelineController _controller;
         private readonly InstructionDecoder _visDecoder;
 
-        // Expose buffers for UI visualization
         public PipelineBuffers PipelineState => _controller.Buffers;
 
-        public PipelinedRunner(MachineState state, ISimulationLogger logger)
+        // Constructor now takes the predictor type
+        public PipelinedRunner(MachineState state, ISimulationLogger logger, string branchPredictor = "static")
         {
             _state = state;
             _logger = logger;
-            _controller = new PipelineController(state);
+            _controller = new PipelineController(state, branchPredictor);
             _visDecoder = new InstructionDecoder();
         }
 
-        // Run until completion or max cycles
         public void Run(int maxCycles = -1)
         {
             _logger.Initialize("CLI_Pipeline_Simulation");
@@ -33,48 +32,47 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
 
             while (!_state.Halted)
             {
-                if (maxCycles != -1 && cycles >= maxCycles)
-                {
-                    _logger.Log("SYS", "Max cycles reached.");
-                    break;
-                }
+                if (maxCycles != -1 && cycles >= maxCycles) break;
                 StepInternal(cycles);
                 cycles++;
             }
             _logger.FinalizeSession();
         }
 
-        // External Step for Manual Mode
-        public void Step(int cycleCount)
-        {
-            StepInternal(cycleCount);
-        }
+        public void Step(int cycleCount) => StepInternal(cycleCount);
 
         private void StepInternal(int cycleIndex)
         {
-            _logger.BeginCycle(cycleIndex);
-            LogPipelineStatus();
+            if (_logger.IsVerbose) { _logger.BeginCycle(cycleIndex); LogPipelineStatus(); }
 
-            try 
-            {
-                _controller.Cycle();
-            }
+            try { _controller.Cycle(); }
             catch (Exception ex)
             {
                 _logger.Log("ERR", $"Pipeline Fault: {ex.Message}");
                 _state.Halted = true;
             }
 
-            _logger.CompleteCycle();
+            if (_logger.IsVerbose) _logger.CompleteCycle();
         }
 
         private void LogPipelineStatus()
         {
-            var buffers = _controller.Buffers;
-            // (Logging logic matches previous version, omitted for brevity but assumed present in logic if needed by logger)
-            // Ideally, we keep the logging logic here. I will include the minimal hook.
-             if (buffers.FetchDecode.IsStalled) _logger.Log("IF", "** STALLED **");
-             // ... full logging logic would be here ...
+            var b = _controller.Buffers;
+
+            // ... (Existing logging logic) ...
+            
+            if (b.FetchDecode.IsStalled)
+            {
+                _logger.Log("ID", "** STALLED **");
+            }
+            else if (!b.FetchDecode.IsEmpty)
+            {
+                // Visual Decode
+                var inst = _visDecoder.Decode(b.FetchDecode.Instruction);
+                string predInfo = b.FetchDecode.PredictedTaken ? $" [P:TAKEN 0x{b.FetchDecode.PredictedTarget:X}]" : "";
+                if (inst != null) _logger.LogStageDecode(b.FetchDecode.PC, b.FetchDecode.Instruction, inst);
+                if (b.FetchDecode.PredictedTaken) _logger.Log("ID", predInfo);
+            }
         }
     }
 }

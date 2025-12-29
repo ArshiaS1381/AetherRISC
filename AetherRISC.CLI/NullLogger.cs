@@ -2,9 +2,10 @@ using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.CLI
 {
-    // A no-op logger for high performance when logging is disabled
     public class NullLogger : ISimulationLogger
     {
+        public bool IsVerbose => false; // Optimization hint: Always false
+
         public void Initialize(string programName) { }
         public void FinalizeSession() { }
         public void BeginCycle(int cycle) { }

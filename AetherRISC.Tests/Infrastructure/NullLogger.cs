@@ -4,6 +4,8 @@ namespace AetherRISC.Tests.Infrastructure;
 
 public class NullLogger : ISimulationLogger
 {
+    public bool IsVerbose => false;
+
     public void Initialize(string programName) { }
     public void FinalizeSession() { }
     public void BeginCycle(int cycle) { }

@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
-using System.Threading;
+using System.Runtime.InteropServices;
 using AetherRISC.CLI;
 using AetherRISC.Core.Architecture.Simulation.Runners;
 
@@ -14,8 +16,14 @@ namespace AetherRISC.CLI
         {
             Console.Title = "AetherRISC CLI";
             Console.OutputEncoding = Encoding.UTF8;
-            ProgramLoader loader;
+            
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (Console.WindowWidth < 100) Console.WindowWidth = 100;
+                if (Console.WindowHeight < 40) Console.WindowHeight = 40;
+            }
 
+            ProgramLoader loader;
             try { loader = new ProgramLoader("config.json"); }
             catch (Exception ex) { Console.WriteLine($"Startup Error: {ex.Message}"); return; }
 
@@ -23,7 +31,7 @@ namespace AetherRISC.CLI
             {
                 Console.Clear();
                 DrawHeader();
-                Console.WriteLine($" Config: [{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [{loader.Config.SteppingMode.ToUpper()}] [Log:{(loader.Config.EnableLogging?"ON":"OFF")}]");
+                Console.WriteLine($" Config: [{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [{loader.Config.BranchPredictor.ToUpper()}] [Log:{loader.Config.LogLevel}]");
                 Console.WriteLine("----------------------------------------");
                 Console.WriteLine("  [1] Run Program");
                 Console.WriteLine("  [2] Settings");
@@ -42,7 +50,7 @@ namespace AetherRISC.CLI
         {
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("========================================");
-            Console.WriteLine("       AetherRISC Simulator v2.1");
+            Console.WriteLine("       AetherRISC Simulator v2.6");
             Console.WriteLine("========================================");
             Console.ResetColor();
         }
@@ -59,7 +67,8 @@ namespace AetherRISC.CLI
                 Console.WriteLine($"  [1] Architecture:   {c.Architecture.ToUpper()}");
                 Console.WriteLine($"  [2] Execution Mode: {c.ExecutionMode.ToUpper()}");
                 Console.WriteLine($"  [3] Stepping Mode:  {c.SteppingMode.ToUpper()}");
-                Console.WriteLine($"  [4] Logging:        {(c.EnableLogging ? "ENABLED" : "DISABLED")}");
+                Console.WriteLine($"  [4] Log Level:      {c.LogLevel}");
+                Console.WriteLine($"  [5] Predictor:      {c.BranchPredictor.ToUpper()}");
                 Console.WriteLine("  [B] Back");
                 Console.WriteLine("----------------------------------------");
                 Console.Write(" Toggle > ");
@@ -70,7 +79,26 @@ namespace AetherRISC.CLI
                 if (key == ConsoleKey.D1) c.Architecture = c.Architecture == "rv64" ? "rv32" : "rv64";
                 if (key == ConsoleKey.D2) c.ExecutionMode = c.ExecutionMode == "pipeline" ? "simple" : "pipeline";
                 if (key == ConsoleKey.D3) c.SteppingMode = c.SteppingMode == "auto" ? "manual" : "auto";
-                if (key == ConsoleKey.D4) c.EnableLogging = !c.EnableLogging;
+                if (key == ConsoleKey.D4) 
+                {
+                    c.LogLevel = c.LogLevel switch 
+                    {
+                        SimulationLogLevel.None => SimulationLogLevel.Simple,
+                        SimulationLogLevel.Simple => SimulationLogLevel.Verbose,
+                        SimulationLogLevel.Verbose => SimulationLogLevel.None,
+                        _ => SimulationLogLevel.Simple
+                    };
+                }
+                if (key == ConsoleKey.D5)
+                {
+                    c.BranchPredictor = c.BranchPredictor switch
+                    {
+                        "static" => "bimodal",
+                        "bimodal" => "gshare",
+                        "gshare" => "static",
+                        _ => "static"
+                    };
+                }
                 
                 loader.SaveConfig();
             }
@@ -112,16 +140,18 @@ namespace AetherRISC.CLI
             
             int cycles = 0;
             Stopwatch sw = new Stopwatch();
+            
+            Console.Clear();
             sw.Start();
 
             while (!session.State.Halted)
             {
                 if (isManual)
                 {
-                    sw.Stop(); // Pause timer while user thinks
+                    sw.Stop();
                     RenderUI(session, cycles, isPipeline, sw.Elapsed);
                     var k = Console.ReadKey(true).Key;
-                    sw.Start(); // Resume
+                    sw.Start();
 
                     if (k == ConsoleKey.Q) { session.State.Halted = true; break; }
                     if (k == ConsoleKey.R) isManual = false; 
@@ -135,15 +165,35 @@ namespace AetherRISC.CLI
                 
                 if (!isManual) 
                 {
-                    if (cycles % 5000 == 0) Console.Write(".");
+                    // Check every 5k cycles for UI updates or Pause requests
+                    if (cycles % 5000 == 0) 
+                    {
+                        if (Console.KeyAvailable)
+                        {
+                            sw.Stop();
+                            RenderUI(session, cycles, isPipeline, sw.Elapsed);
+                            Console.ReadKey(true); 
+                            
+                            Console.SetCursorPosition(0, 30);
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine("\n[PAUSED] Switched to Manual Mode. Press Enter to Step, 'R' to Resume.");
+                            Console.ResetColor();
+                            
+                            var nextKey = Console.ReadKey(true).Key;
+                            if (nextKey == ConsoleKey.R) sw.Start();
+                            else if (nextKey == ConsoleKey.Q) { session.State.Halted = true; break; }
+                            else { isManual = true; sw.Start(); }
+                        }
+                        else RenderUI(session, cycles, isPipeline, sw.Elapsed);
+                    }
                 }
             }
             sw.Stop();
             
-            RenderUI(session, cycles, isPipeline, sw.Elapsed); // Final state
+            RenderUI(session, cycles, isPipeline, sw.Elapsed);
             
-            // Performance Report
-            Console.WriteLine("\n\n----------------------------------------");
+            Console.SetCursorPosition(0, 32); 
+            Console.WriteLine("\n----------------------------------------");
             Console.WriteLine(" Execution Report");
             Console.WriteLine("----------------------------------------");
             Console.WriteLine($" Status:       {(session.State.Halted ? "HALTED" : "TIMEOUT")}");
@@ -159,48 +209,85 @@ namespace AetherRISC.CLI
 
         static void RenderUI(SimulationSession s, int cycle, bool isPipeline, TimeSpan elapsed)
         {
-            Console.Clear();
+            Console.SetCursorPosition(0, 0);
+            
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($" CYCLE: {cycle} | PC: 0x{s.State.Registers.PC:X} | TIME: {elapsed.TotalSeconds:F2}s");
+            Console.WriteLine(FormatLineTruncate($" CYCLE: {cycle,-10} | PC: 0x{s.State.Registers.PC:X8} | TIME: {elapsed.TotalSeconds:F2}s"));
             Console.ResetColor();
             
-            // Draw Registers (Compact)
-            Console.WriteLine("\n [Registers]");
+            Console.WriteLine(FormatLineTruncate(" [Registers]"));
             for(int i=0; i<32; i+=4)
             {
-                Console.Write($" x{i,-2}={s.State.Registers.Read(i):X8}  ");
-                Console.Write($" x{i+1,-2}={s.State.Registers.Read(i+1):X8}  ");
-                Console.Write($" x{i+2,-2}={s.State.Registers.Read(i+2):X8}  ");
-                Console.WriteLine($" x{i+3,-2}={s.State.Registers.Read(i+3):X8}");
+                string r1 = $"x{i}={s.State.Registers.Read(i):X8}";
+                string r2 = $"x{i+1}={s.State.Registers.Read(i+1):X8}";
+                string r3 = $"x{i+2}={s.State.Registers.Read(i+2):X8}";
+                string r4 = $"x{i+3}={s.State.Registers.Read(i+3):X8}";
+                Console.WriteLine(FormatLineTruncate($" {r1,-15} {r2,-15} {r3,-15} {r4,-15}"));
             }
 
-            // Draw Pipeline if active
+            Console.WriteLine(FormatLineTruncate(" [Pipeline Stages]"));
             if (isPipeline && s.PipelinedRunner != null)
             {
                 var pipe = s.PipelinedRunner.PipelineState;
-                Console.WriteLine("\n [Pipeline Stages]");
-                Console.WriteLine($" IF:  [{FormatHex(pipe.FetchDecode.Instruction)}] Stall:{pipe.FetchDecode.IsStalled}");
-                Console.WriteLine($" ID:  [{FormatHex(pipe.DecodeExecute.RawInstruction)}] {pipe.DecodeExecute.DecodedInst?.Mnemonic ?? "-"}");
-                Console.WriteLine($" EX:  [{FormatHex(pipe.ExecuteMemory.RawInstruction)}] {pipe.ExecuteMemory.DecodedInst?.Mnemonic ?? "-"}");
-                Console.WriteLine($" MEM: [{FormatHex(pipe.MemoryWriteback.RawInstruction)}] {pipe.MemoryWriteback.DecodedInst?.Mnemonic ?? "-"}");
-                Console.WriteLine($" WB:  RegWrite:{pipe.MemoryWriteback.RegWrite} Rd:{pipe.MemoryWriteback.Rd} Val:{pipe.MemoryWriteback.FinalResult:X}");
+                Console.WriteLine(FormatLineTruncate($" IF:  [{FormatHex(pipe.FetchDecode.Instruction)}] Stall:{pipe.FetchDecode.IsStalled} Pred:{pipe.FetchDecode.PredictedTaken}"));
+                Console.WriteLine(FormatLineTruncate($" ID:  [{FormatHex(pipe.DecodeExecute.RawInstruction)}] {FormatMnemonic(pipe.DecodeExecute.DecodedInst?.Mnemonic)}"));
+                Console.WriteLine(FormatLineTruncate($" EX:  [{FormatHex(pipe.ExecuteMemory.RawInstruction)}] {FormatMnemonic(pipe.ExecuteMemory.DecodedInst?.Mnemonic)} Mis:{pipe.ExecuteMemory.Misprediction}"));
+                Console.WriteLine(FormatLineTruncate($" MEM: [{FormatHex(pipe.MemoryWriteback.RawInstruction)}] {FormatMnemonic(pipe.MemoryWriteback.DecodedInst?.Mnemonic)}"));
+                Console.WriteLine(FormatLineTruncate($" WB:  RegWrite:{pipe.MemoryWriteback.RegWrite} Rd:{pipe.MemoryWriteback.Rd} Val:{pipe.MemoryWriteback.FinalResult:X}"));
+            }
+            else
+            {
+                for(int i=0; i<5; i++) Console.WriteLine(FormatLineTruncate(""));
             }
 
-            // Draw ECALL Output
-            Console.WriteLine("\n [Console Output]");
+            // ... (Rest of existing UI code) ...
+            Console.WriteLine(FormatLineTruncate(" [Console Output]"));
             Console.BackgroundColor = ConsoleColor.DarkBlue;
             Console.ForegroundColor = ConsoleColor.White;
-            string output = s.OutputBuffer.ToString();
-            // Show last 5 lines
-            var lines = output.Split('\n');
-            int start = Math.Max(0, lines.Length - 5);
-            for(int i=start; i<lines.Length; i++) 
-                Console.WriteLine(" " + lines[i].TrimEnd().PadRight(Console.WindowWidth - 2));
+            
+            var consoleLines = GetWrappedLines(s.OutputBuffer.ToString(), Console.WindowWidth - 2);
+            int totalLines = consoleLines.Count;
+            int start = Math.Max(0, totalLines - 5);
+            
+            for(int i=0; i<5; i++) 
+            {
+                string content = (start + i < totalLines) ? consoleLines[start + i] : "";
+                Console.WriteLine(FormatLineTruncate(" " + content));
+            }
             Console.ResetColor();
 
-            Console.WriteLine("\n [Controls] Enter: Step | R: Run All | Q: Quit");
+            Console.WriteLine(FormatLineTruncate(" [Controls] Enter: Step | R: Run All | Q: Quit"));
         }
 
+        static List<string> GetWrappedLines(string fullText, int width)
+        {
+            var result = new List<string>();
+            var logicalLines = fullText.Replace("\r\n", "\n").Split('\n');
+            
+            foreach (var line in logicalLines)
+            {
+                if (string.IsNullOrEmpty(line))
+                {
+                    result.Add("");
+                    continue;
+                }
+                for (int i = 0; i < line.Length; i += width)
+                {
+                    int len = Math.Min(width, line.Length - i);
+                    result.Add(line.Substring(i, len));
+                }
+            }
+            return result;
+        }
+
+        static string FormatLineTruncate(string text)
+        {
+            int w = Console.WindowWidth - 1; 
+            if (text.Length > w) return text.Substring(0, w);
+            return text.PadRight(w);
+        }
+
+        static string FormatMnemonic(string? m) => (m ?? "-").PadRight(10);
         static string FormatHex(uint val) => val == 0 ? "        " : $"{val:X8}";
     }
 }

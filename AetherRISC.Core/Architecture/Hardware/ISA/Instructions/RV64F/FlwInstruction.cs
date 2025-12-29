@@ -1,6 +1,8 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using System;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64F;
 
 [RiscvInstruction("FLW", InstructionSet.RV64F, RiscvEncodingType.I, 0x07, Funct3 = 2,
@@ -17,5 +19,11 @@ public class FlwInstruction : ITypeInstruction
         uint addr = (uint)((long)s.Registers.Read(d.Rs1) + (long)(int)d.Immediate);
         uint bits = s.Memory!.ReadWord(addr);
         s.FRegisters.WriteSingle(d.Rd, BitConverter.Int32BitsToSingle((int)bits));
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        // Pipeline: ALU calculates Address
+        buffers.ExecuteMemory.AluResult = (ulong)((long)rs1Val + (long)buffers.DecodeExecute.Immediate);
     }
 }

@@ -4,14 +4,14 @@ namespace AetherRISC.Core.Helpers
 {
     public class NullLogger : ISimulationLogger
     {
+        // Fix: Implement the missing interface property
+        public bool IsVerbose => false;
+
         public void Initialize(string programName) { }
         public void FinalizeSession() { }
         public void BeginCycle(int cycle) { }
         public void CompleteCycle() { }
-        
-        // Implements the missing generic Log method
         public void Log(string component, string message) { }
-
         public void LogStageFetch(ulong pc, uint raw) { }
         public void LogStageDecode(ulong pc, uint raw, IInstruction inst) { }
         public void LogStageExecute(ulong pc, uint raw, string info) { }

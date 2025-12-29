@@ -25,6 +25,9 @@ public class MultiOSHandler : IHostSystem
     public void HandleBreak(MachineState state) 
     {
         if (!Silent) Output.WriteLine($"[Debugger] Breakpoint at 0x{state.ProgramCounter:X}");
+        
+        // [FIX] EBREAK must halt the simulation in test contexts
+        state.Halted = true;
     }
 
     private void HandleRars(MachineState state)

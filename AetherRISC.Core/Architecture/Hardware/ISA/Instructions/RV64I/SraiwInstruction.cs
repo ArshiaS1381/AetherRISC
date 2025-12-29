@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("SRAIW", InstructionSet.RV64I, RiscvEncodingType.ShiftImm, 0x1B, Funct3 = 5, Funct6 = 0x20,
@@ -12,11 +14,15 @@ public class SraiwInstruction : ITypeInstruction
 
     public override void Execute(MachineState s, InstructionData d) 
     {
-        // Extract 32-bit value for arithmetic shift
         int v1 = (int)s.Registers.Read(d.Rs1);
         int shamt = (int)d.Immediate & 0x1F;
-        
-        // Perform 32-bit shift then cast back to ulong (automatic sign-extension to 64 bits)
         s.Registers.Write(d.Rd, (ulong)(long)(v1 >> shamt));
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        int v1 = (int)rs1Val;
+        int shamt = buffers.DecodeExecute.Immediate & 0x1F;
+        buffers.ExecuteMemory.AluResult = (ulong)(long)(v1 >> shamt);
     }
 }

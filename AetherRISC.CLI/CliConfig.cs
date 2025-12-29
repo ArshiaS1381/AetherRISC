@@ -2,6 +2,11 @@ using System.Text.Json.Serialization;
 
 namespace AetherRISC.CLI
 {
+    public enum SimulationLogLevel
+    {
+        None, Simple, Verbose
+    }
+
     public class CliConfig
     {
         [JsonPropertyName("programs_directory")]
@@ -25,7 +30,13 @@ namespace AetherRISC.CLI
         [JsonPropertyName("stepping_mode")]
         public string SteppingMode { get; set; } = "auto";
         
-        [JsonPropertyName("enable_logging")]
-        public bool EnableLogging { get; set; } = true;
+        // --- NEW ---
+        [JsonPropertyName("branch_predictor")]
+        public string BranchPredictor { get; set; } = "static";
+        // -----------
+
+        [JsonPropertyName("log_level")]
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public SimulationLogLevel LogLevel { get; set; } = SimulationLogLevel.Simple;
     }
 }

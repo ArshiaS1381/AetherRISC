@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices; // Required for Inlining
 
 namespace AetherRISC.Core.Architecture.Hardware.Registers
 {
@@ -6,26 +7,28 @@ namespace AetherRISC.Core.Architecture.Hardware.Registers
     {
         private readonly ulong[] _registers = new ulong[32];
         
-        // The Program Counter
         public ulong PC { get; set; }
 
-        // 1. Restore the Read() method required by legacy instructions
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ulong Read(int index)
         {
+            // x0 is always 0. The array entry is 0 initialized, 
+            // but the check prevents logic errors elsewhere.
             if (index == 0) return 0;
             return _registers[index];
         }
 
-        // 2. Restore the Write() method required by legacy instructions
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Write(int index, ulong value)
         {
             if (index != 0) _registers[index] = value;
         }
 
-        // 3. Keep the indexer for cleaner new code (state.Registers[5])
         public ulong this[int index]
         {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => Read(index);
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             set => Write(index, value);
         }
 

@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Extensions.B.Zba;
 
 [RiscvInstruction("ADD.UW", InstructionSet.Zba, RiscvEncodingType.R, 0x3B, Funct3 = 0, Funct7 = 0x04,
@@ -15,5 +17,11 @@ public class AddUwInstruction : RTypeInstruction
         ulong rs1Val = s.Registers.Read(d.Rs1);
         ulong rs2Zext = s.Registers.Read(d.Rs2) & 0xFFFFFFFFul;
         s.Registers.Write(d.Rd, rs1Val + rs2Zext);
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        ulong rs2Zext = rs2Val & 0xFFFFFFFFul;
+        buffers.ExecuteMemory.AluResult = rs1Val + rs2Zext;
     }
 }

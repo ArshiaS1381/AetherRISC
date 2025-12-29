@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Extensions.Zicsr;
 
 [RiscvInstruction("CSRRC", InstructionSet.Zicsr, RiscvEncodingType.I, 0x73, Funct3 = 3, 
@@ -16,5 +18,18 @@ public class CsrrcInstruction : ITypeInstruction
         ulong oldVal = s.Csr.Read(csrAddr);
         if (d.Rs1 != 0) s.Csr.Write(csrAddr, oldVal & ~s.Registers.Read(d.Rs1));
         s.Registers.Write(d.Rd, oldVal);
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        uint csrAddr = (uint)buffers.DecodeExecute.Immediate & 0xFFFu;
+        ulong oldVal = state.Csr.Read(csrAddr);
+        
+        if (this.Rs1 != 0)
+        {
+            state.Csr.Write(csrAddr, oldVal & ~rs1Val);
+        }
+        
+        buffers.ExecuteMemory.AluResult = oldVal;
     }
 }

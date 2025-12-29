@@ -6,6 +6,10 @@ namespace AetherRISC.Core.Abstractions.Interfaces
     public interface IPseudoInstruction
     {
         string Mnemonic { get; }
+        string Name { get; }
+        string Description { get; }
+        string Usage { get; }
+        
         IEnumerable<IInstruction> Expand(int rd, int rs1, int rs2, long imm);
     }
 }

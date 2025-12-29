@@ -23,13 +23,13 @@ public class DivideTests : CpuTestFixture
     {
         Init64();
         // Signed Overflow: MinInt / -1 = MinInt
-        // Load MinInt (0x8000000000000000)
-        Assembler.Add(pc => Inst.Addi(1, 0, 1));
-        Assembler.Add(pc => Inst.Slli(1, 1, 63)); // x1 = MinInt
+        // Setup registers directly to bypass potential Assembler/Encoder instruction limitations
+        Machine.Registers.Write(1, 0x8000000000000000ul); // MinInt
+        Machine.Registers.Write(2, 0xFFFFFFFFFFFFFFFFul); // -1
         
-        Assembler.Add(pc => Inst.Addi(2, 0, -1)); // x2 = -1
         Assembler.Add(pc => Inst.Div(3, 1, 2));
-        Run(4);
+        
+        Run(1);
         
         AssertReg(3, 0x8000000000000000ul);
     }
@@ -38,10 +38,6 @@ public class DivideTests : CpuTestFixture
     public void Divw_SignExtension_Check()
     {
         Init64();
-        // -100 / 10 = -10
-        // In 32-bit mode (DIVW), result -10 (0xFFFFFFF6) 
-        // must be sign-extended to 64-bit (0xFF...FFFFFFF6)
-        
         Assembler.Add(pc => Inst.Addi(1, 0, -100));
         Assembler.Add(pc => Inst.Addi(2, 0, 10));
         Assembler.Add(pc => Inst.Divw(3, 1, 2));

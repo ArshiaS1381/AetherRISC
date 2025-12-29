@@ -1,5 +1,7 @@
 using AetherRISC.Core.Architecture.Hardware.ISA;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
+
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 
 [RiscvInstruction("BLTU", InstructionSet.RV64I, RiscvEncodingType.B, 0x63, Funct3 = 6,
@@ -9,7 +11,6 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
 public class BltuInstruction : BTypeInstruction
 {
     public BltuInstruction(int rs1, int rs2, int imm) : base(rs1, rs2, imm) { }
-    
     public BltuInstruction(int rs1, int rs2, int imm, uint dummy) : base(rs1, rs2, imm) { }
 
     public override void Execute(MachineState s, InstructionData d)
@@ -17,6 +18,15 @@ public class BltuInstruction : BTypeInstruction
         if (s.Registers.Read(d.Rs1) < s.Registers.Read(d.Rs2))
         {
             s.ProgramCounter = d.PC + (ulong)(long)(int)d.Immediate;
+        }
+    }
+
+    public override void Compute(MachineState state, ulong rs1Val, ulong rs2Val, PipelineBuffers buffers)
+    {
+        if (rs1Val < rs2Val)
+        {
+            state.Registers.PC = buffers.DecodeExecute.PC + (ulong)(long)buffers.DecodeExecute.Immediate;
+            buffers.ExecuteMemory.BranchTaken = true;
         }
     }
 }

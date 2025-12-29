@@ -4,6 +4,7 @@ using AetherRISC.Core.Architecture.Simulation.State;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Controller;
 using AetherRISC.Core.Architecture.Hardware.Pipeline;
 using AetherRISC.Core.Architecture.Hardware.ISA.Decoding;
+using AetherRISC.Core.Abstractions.Diagnostics;
 
 namespace AetherRISC.Core.Architecture.Simulation.Runners
 {
@@ -15,13 +16,15 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
         private readonly InstructionDecoder _visDecoder;
 
         public PipelineBuffers PipelineState => _controller.Buffers;
+        
+        // Expose Metrics
+        public PerformanceMetrics Metrics => _controller.Metrics;
 
-        // Constructor now takes the predictor type
-        public PipelinedRunner(MachineState state, ISimulationLogger logger, string branchPredictor = "static")
+        public PipelinedRunner(MachineState state, ISimulationLogger logger, string branchPredictor, ArchitectureSettings settings)
         {
             _state = state;
             _logger = logger;
-            _controller = new PipelineController(state, branchPredictor);
+            _controller = new PipelineController(state, branchPredictor, settings ?? new ArchitectureSettings());
             _visDecoder = new InstructionDecoder();
         }
 
@@ -58,16 +61,12 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
         private void LogPipelineStatus()
         {
             var b = _controller.Buffers;
-
-            // ... (Existing logging logic) ...
-            
             if (b.FetchDecode.IsStalled)
             {
                 _logger.Log("ID", "** STALLED **");
             }
             else if (!b.FetchDecode.IsEmpty)
             {
-                // Visual Decode
                 var inst = _visDecoder.Decode(b.FetchDecode.Instruction);
                 string predInfo = b.FetchDecode.PredictedTaken ? $" [P:TAKEN 0x{b.FetchDecode.PredictedTarget:X}]" : "";
                 if (inst != null) _logger.LogStageDecode(b.FetchDecode.PC, b.FetchDecode.Instruction, inst);

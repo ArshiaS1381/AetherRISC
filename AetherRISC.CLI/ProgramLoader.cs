@@ -9,6 +9,7 @@ using AetherRISC.Core.Architecture.Hardware.Memory;
 using AetherRISC.Core.Helpers;
 using AetherRISC.Core.Architecture.Simulation.Runners;
 using AetherRISC.Core.Abstractions.Interfaces;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
 
 namespace AetherRISC.CLI
 {
@@ -77,7 +78,6 @@ namespace AetherRISC.CLI
                 var logDir = Path.Combine(_baseDir, Config.LogsDirectory);
                 if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
                 string logPath = Path.Combine(logDir, $"{Path.GetFileNameWithoutExtension(filePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.log");
-                
                 var fileLogger = new FileLogger(logPath, Config.LogLevel);
                 fileLogger.Initialize(Path.GetFileName(filePath));
                 logger = fileLogger;
@@ -95,10 +95,20 @@ namespace AetherRISC.CLI
             };
 
             if (Config.ExecutionMode.Equals("pipeline", StringComparison.OrdinalIgnoreCase))
-                // PASSING THE CONFIG VALUE HERE
-                session.PipelinedRunner = new PipelinedRunner(state, logger, Config.BranchPredictor);
+            {
+                // MAP CONFIG TO SETTINGS
+                var archSettings = new ArchitectureSettings
+                {
+                    EnableEarlyBranchResolution = Config.EnableEarlyBranchResolution,
+                    BranchPredictorInitialValue = Config.PredictorInitValue
+                };
+
+                session.PipelinedRunner = new PipelinedRunner(state, logger, Config.BranchPredictor, archSettings);
+            }
             else
+            {
                 session.SimpleRunner = new SimpleRunner(state, logger);
+            }
 
             return session;
         }

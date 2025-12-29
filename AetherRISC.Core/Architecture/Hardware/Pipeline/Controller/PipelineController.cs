@@ -4,14 +4,17 @@ using AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Stages;
 using AetherRISC.Core.Architecture.Simulation.State;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors;
+using AetherRISC.Core.Abstractions.Diagnostics;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
 {
     public class PipelineController
     {
-        private readonly PipelineBuffers _buffers;
-        public PipelineBuffers Buffers => _buffers;
+        public PipelineBuffers Buffers { get; }
         public IBranchPredictor Predictor { get; }
+        
+        // Public Metrics for the Runner to read
+        public PerformanceMetrics Metrics { get; } = new PerformanceMetrics();
 
         private readonly FetchStage _fetch;
         private readonly DecodeStage _decode;
@@ -23,12 +26,14 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
         private readonly StructuralHazardUnit _structHazard;
         private readonly ControlHazardUnit _controlHazard;
         private readonly MachineState _state;
+        private readonly ArchitectureSettings _settings;
 
-        public PipelineController(MachineState state, string predictorType = "static")
+        public PipelineController(MachineState state, string predictorType, ArchitectureSettings settings)
         {
             _state = state;
-            _buffers = new PipelineBuffers();
-            Predictor = PredictorFactory.Create(predictorType);
+            _settings = settings ?? new ArchitectureSettings();
+            Buffers = new PipelineBuffers();
+            Predictor = PredictorFactory.Create(predictorType, _settings);
 
             _fetch = new FetchStage(state);
             _decode = new DecodeStage(state);
@@ -43,47 +48,87 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
 
         public void Cycle()
         {
-            // 1. Resolve Data/Structural Hazards
-            _dataHazard.Resolve(_buffers);
-            _structHazard.DetectAndHandle(_buffers);
+            // [METRICS] Cycle Count
+            Metrics.TotalCycles++;
+            ulong pcAtStartOfCycle = _state.Registers.PC;
+
+            // 1. Resolve Hazards
+            _dataHazard.Resolve(Buffers);
+            _structHazard.DetectAndHandle(Buffers);
             
-            // 2. Commit (Writeback)
-            _writeback.Run(_buffers);
-            if (_state.Halted) { _buffers.Flush(); return; }
-
-            // 3. Memory Stage
-            _memory.Run(_buffers);
-
-            // 4. Execute Stage (Calculates Misprediction)
-            _execute.Run(_buffers); 
-
-            // --- LEARNING STEP ---
-            // If the Execute stage processed a branch/jump, update the predictor.
-            if (!_buffers.ExecuteMemory.IsEmpty && _buffers.ExecuteMemory.DecodedInst != null)
+            // [METRICS] Stall Counting (FIXED: Only check FetchDecode)
+            // If the front-end is stalled, the whole pipeline is effectively stalling for data.
+            if (Buffers.FetchDecode.IsStalled)
             {
-                var inst = _buffers.ExecuteMemory.DecodedInst;
-                if (inst.IsBranch || inst.IsJump)
+                Metrics.DataHazardStalls++;
+            }
+
+            // 2. Commit (Writeback)
+            _writeback.Run(Buffers);
+            
+            // [METRICS] Retired Instruction Counting
+            if (!Buffers.MemoryWriteback.IsEmpty) Metrics.InstructionsRetired++;
+
+            if (_state.Halted) { Buffers.Flush(); return; }
+
+            // 3. Memory
+            _memory.Run(Buffers);
+
+            // 4. Execute
+            _execute.Run(Buffers); 
+            ulong pcAfterExecute = _state.Registers.PC;
+            bool executeChangedPC = (pcAfterExecute != pcAtStartOfCycle);
+
+            // [METRICS] Branch/Jump Analysis
+            if (!Buffers.ExecuteMemory.IsEmpty && Buffers.ExecuteMemory.DecodedInst != null)
+            {
+                var inst = Buffers.ExecuteMemory.DecodedInst;
+                bool isMisprediction = Buffers.ExecuteMemory.Misprediction;
+
+                if (inst.IsBranch) // Conditional
                 {
-                    // Feed the actual results back into the predictor so it learns
-                    Predictor.Update(
-                        _buffers.ExecuteMemory.PC, 
-                        _buffers.ExecuteMemory.BranchTaken, 
-                        _buffers.ExecuteMemory.ActualTarget
-                    );
+                    Metrics.TotalBranches++;
+                    if (isMisprediction) Metrics.BranchMisses++;
+                    else Metrics.BranchHits++;
+                    
+                    Predictor.Update(Buffers.ExecuteMemory.PC, Buffers.ExecuteMemory.BranchTaken, Buffers.ExecuteMemory.ActualTarget);
+                }
+                else if (inst.IsJump) // Unconditional
+                {
+                    Metrics.TotalJumps++;
+                    Predictor.Update(Buffers.ExecuteMemory.PC, true, Buffers.ExecuteMemory.ActualTarget);
                 }
             }
-            // ---------------------
 
-            // 5. Control Hazards (Flush on Misprediction)
-            // If Execute said "Misprediction", we flush now.
-            if (_controlHazard.DetectAndHandle(_buffers))
+            // 5. Control Hazards
+            bool mispredictionOccurred = _controlHazard.DetectAndHandle(Buffers);
+            
+            // [METRICS] Flush Counting
+            if (mispredictionOccurred) Metrics.ControlHazardFlushes++;
+
+            // 6. Decode
+            _decode.Run(Buffers);
+            
+            // 7. Fetch Logic (Re-applying the Cycle Accuracy Fix)
+            if (_settings.EnableEarlyBranchResolution)
             {
-                // Flushed logic handles cleanup
+                // [FAST MODE] 1 Cycle Penalty
+                _fetch.Run(Buffers, Predictor); 
             }
-
-            // 6. Front End
-            _decode.Run(_buffers);
-            _fetch.Run(_buffers, Predictor); 
+            else
+            {
+                // [REALISTIC MODE] 2 Cycle Penalty
+                // Force Fetch to use the PC from start of cycle
+                _state.Registers.PC = pcAtStartOfCycle;
+                _fetch.Run(Buffers, Predictor);
+                
+                // If Execute actually jumped, it overrides Fetch
+                if (executeChangedPC)
+                {
+                    _state.Registers.PC = pcAfterExecute;
+                    Buffers.FetchDecode.Flush();
+                }
+            }
         }
     }
 }

@@ -7,129 +7,108 @@ using System.Text;
 using System.Runtime.InteropServices;
 using AetherRISC.CLI;
 using AetherRISC.Core.Architecture.Simulation.Runners;
+using AetherRISC.Core.Abstractions.Diagnostics;
 
 namespace AetherRISC.CLI
 {
     class Program
     {
+        // Global view state
+        static int _consoleScroll = 0;
+        static int _windowHeight = 50;
+        static int _windowWidth = 120;
+
         static void Main(string[] args)
         {
-            Console.Title = "AetherRISC CLI";
-            Console.OutputEncoding = Encoding.UTF8;
-            
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                if (Console.WindowWidth < 100) Console.WindowWidth = 100;
-                if (Console.WindowHeight < 40) Console.WindowHeight = 40;
-            }
+            SetupConsole();
 
             ProgramLoader loader;
             try { loader = new ProgramLoader("config.json"); }
             catch (Exception ex) { Console.WriteLine($"Startup Error: {ex.Message}"); return; }
 
+            // --- MAIN MENU LOOP ---
             while (true)
             {
-                Console.Clear();
-                DrawHeader();
-                Console.WriteLine($" Config: [{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [{loader.Config.BranchPredictor.ToUpper()}] [Log:{loader.Config.LogLevel}]");
-                Console.WriteLine("----------------------------------------");
-                Console.WriteLine("  [1] Run Program");
-                Console.WriteLine("  [2] Settings");
-                Console.WriteLine("  [Q] Quit");
-                Console.WriteLine("----------------------------------------");
-                Console.Write(" Selection > ");
+                // Prepare Menu Items
+                string predShort = loader.Config.BranchPredictor.ToUpper().Replace("BIMODAL", "BIM"); 
+                string earlyRes = loader.Config.EnableEarlyBranchResolution ? "FAST" : "ACC";
+                string rtMetrics = loader.Config.ShowRealTimeMetrics ? "ON" : "OFF";
+                string configStr = $"[{loader.Config.Architecture.ToUpper()}] [{loader.Config.ExecutionMode.ToUpper()}] [BP:{predShort}/{loader.Config.PredictorInitValue}] [{earlyRes}] [RT:{rtMetrics}]";
 
-                var key = Console.ReadKey().Key;
-                if (key == ConsoleKey.Q) break;
-                if (key == ConsoleKey.D1 || key == ConsoleKey.NumPad1) ShowProgramList(loader);
-                if (key == ConsoleKey.D2 || key == ConsoleKey.NumPad2) ShowSettings(loader);
+                int selected = MenuHandler.Show("AetherRISC Simulator v3.8", configStr, new[] { "Run Program", "Settings", "Quit" });
+
+                if (selected == 0) ShowProgramList(loader);
+                else if (selected == 1) ShowSettings(loader);
+                else if (selected == 2) break;
             }
         }
 
-        static void DrawHeader()
+        static void SetupConsole()
         {
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("========================================");
-            Console.WriteLine("       AetherRISC Simulator v2.6");
-            Console.WriteLine("========================================");
-            Console.ResetColor();
+            Console.Title = "AetherRISC CLI";
+            Console.OutputEncoding = Encoding.UTF8;
+            Console.CursorVisible = false;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (Console.WindowWidth < _windowWidth) Console.WindowWidth = _windowWidth;
+                if (Console.WindowHeight < _windowHeight) Console.WindowHeight = _windowHeight;
+                if (Console.BufferHeight < _windowHeight) Console.BufferHeight = _windowHeight;
+                if (Console.BufferWidth < _windowWidth) Console.BufferWidth = _windowWidth;
+            }
         }
 
         static void ShowSettings(ProgramLoader loader)
         {
+            int selected = 0;
             while(true)
             {
-                Console.Clear();
-                DrawHeader();
                 var c = loader.Config;
-                Console.WriteLine(" Settings");
-                Console.WriteLine("----------------------------------------");
-                Console.WriteLine($"  [1] Architecture:   {c.Architecture.ToUpper()}");
-                Console.WriteLine($"  [2] Execution Mode: {c.ExecutionMode.ToUpper()}");
-                Console.WriteLine($"  [3] Stepping Mode:  {c.SteppingMode.ToUpper()}");
-                Console.WriteLine($"  [4] Log Level:      {c.LogLevel}");
-                Console.WriteLine($"  [5] Predictor:      {c.BranchPredictor.ToUpper()}");
-                Console.WriteLine("  [B] Back");
-                Console.WriteLine("----------------------------------------");
-                Console.Write(" Toggle > ");
+                string[] options = new[] 
+                {
+                    $"Architecture:   {c.Architecture.ToUpper()}",
+                    $"Execution Mode: {c.ExecutionMode.ToUpper()}",
+                    $"Stepping Mode:  {c.SteppingMode.ToUpper()}",
+                    $"Log Level:      {c.LogLevel}",
+                    $"Predictor Type: {c.BranchPredictor.ToUpper()}",
+                    $"Predictor Init: {c.PredictorInitValue}",
+                    $"Resolution:     {(c.EnableEarlyBranchResolution ? "Fast (1 Cycle)" : "Realistic (2 Cycle)")}",
+                    $"Real-Time UI:   {(c.ShowRealTimeMetrics ? "Enabled" : "Disabled")}",
+                    "Back"
+                };
 
-                var key = Console.ReadKey(true).Key;
-                if (key == ConsoleKey.B) break;
+                selected = MenuHandler.Show("Configuration", "Modify simulation parameters", options, selected);
+
+                if (selected == -1 || selected == 8) { loader.SaveConfig(); break; }
                 
-                if (key == ConsoleKey.D1) c.Architecture = c.Architecture == "rv64" ? "rv32" : "rv64";
-                if (key == ConsoleKey.D2) c.ExecutionMode = c.ExecutionMode == "pipeline" ? "simple" : "pipeline";
-                if (key == ConsoleKey.D3) c.SteppingMode = c.SteppingMode == "auto" ? "manual" : "auto";
-                if (key == ConsoleKey.D4) 
+                if (selected == 0) c.Architecture = c.Architecture == "rv64" ? "rv32" : "rv64";
+                if (selected == 1) c.ExecutionMode = c.ExecutionMode == "pipeline" ? "simple" : "pipeline";
+                if (selected == 2) c.SteppingMode = c.SteppingMode == "auto" ? "manual" : "auto";
+                if (selected == 3) c.LogLevel = c.LogLevel == SimulationLogLevel.None ? SimulationLogLevel.Simple : (c.LogLevel == SimulationLogLevel.Simple ? SimulationLogLevel.Verbose : SimulationLogLevel.None);
+                if (selected == 4)
                 {
-                    c.LogLevel = c.LogLevel switch 
-                    {
-                        SimulationLogLevel.None => SimulationLogLevel.Simple,
-                        SimulationLogLevel.Simple => SimulationLogLevel.Verbose,
-                        SimulationLogLevel.Verbose => SimulationLogLevel.None,
-                        _ => SimulationLogLevel.Simple
+                    c.BranchPredictor = c.BranchPredictor.ToLowerInvariant() switch {
+                        "static" => "bimodal-1bit", "bimodal-1bit" => "bimodal-2bit", "bimodal-2bit" => "bimodal-3bit",
+                        "bimodal-3bit" => "gshare", "gshare" => "static", _ => "static"
                     };
                 }
-                if (key == ConsoleKey.D5)
-                {
-                    c.BranchPredictor = c.BranchPredictor switch
-                    {
-                        "static" => "bimodal",
-                        "bimodal" => "gshare",
-                        "gshare" => "static",
-                        _ => "static"
-                    };
-                }
-                
-                loader.SaveConfig();
+                if (selected == 5) { c.PredictorInitValue++; if (c.PredictorInitValue > 3) c.PredictorInitValue = 0; }
+                if (selected == 6) c.EnableEarlyBranchResolution = !c.EnableEarlyBranchResolution;
+                if (selected == 7) c.ShowRealTimeMetrics = !c.ShowRealTimeMetrics;
             }
         }
 
         static void ShowProgramList(ProgramLoader loader)
         {
             var files = loader.GetAvailablePrograms();
-            while(true)
-            {
-                Console.Clear();
-                DrawHeader();
-                Console.WriteLine(" Select Program:");
-                if (files.Length == 0) Console.WriteLine("  (No files found)");
-                for (int i = 0; i < files.Length; i++)
-                    Console.WriteLine($"  [{i + 1}] {Path.GetFileName(files[i])}");
-                
-                Console.WriteLine("\n  [B] Back");
-                Console.Write(" > ");
-                
-                var input = Console.ReadLine();
-                if (input?.ToUpper() == "B") return;
-                
-                if (int.TryParse(input, out int id) && id > 0 && id <= files.Length)
-                {
-                    RunSimulation(loader, files[id - 1]);
-                    Console.WriteLine("\nPress any key to continue...");
-                    Console.ReadKey();
-                    return;
-                }
-            }
+            if (files.Length == 0) { Console.WriteLine("No programs found."); Console.ReadKey(); return; }
+            
+            var names = files.Select(Path.GetFileName).Concat(new[] { "Back" }).ToArray();
+            
+            int selected = MenuHandler.Show("Select Program", "", names!);
+            if (selected == -1 || selected == names.Length - 1) return;
+
+            RunSimulation(loader, files[selected]);
         }
 
         static void RunSimulation(ProgramLoader loader, string file)
@@ -137,84 +116,86 @@ namespace AetherRISC.CLI
             using var session = loader.PrepareSession(file);
             bool isManual = loader.Config.SteppingMode == "manual";
             bool isPipeline = loader.Config.ExecutionMode == "pipeline";
+            bool showRt = loader.Config.ShowRealTimeMetrics;
             
+            _consoleScroll = 0;
             int cycles = 0;
-            Stopwatch sw = new Stopwatch();
+            Stopwatch perfTimer = new Stopwatch(); 
             
-            Console.Clear();
-            sw.Start();
+            Console.Clear(); 
+            RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt);
 
             while (!session.State.Halted)
             {
+                if (cycles > loader.Config.MaxCycles) break;
+
                 if (isManual)
                 {
-                    sw.Stop();
-                    RenderUI(session, cycles, isPipeline, sw.Elapsed);
+                    perfTimer.Stop(); 
                     var k = Console.ReadKey(true).Key;
-                    sw.Start();
-
-                    if (k == ConsoleKey.Q) { session.State.Halted = true; break; }
-                    if (k == ConsoleKey.R) isManual = false; 
-                }
-
-                if (isPipeline) session.PipelinedRunner?.Step(cycles);
-                else session.SimpleRunner?.Run(1);
-
-                cycles++;
-                if (cycles > loader.Config.MaxCycles) break;
-                
-                if (!isManual) 
-                {
-                    // Check every 5k cycles for UI updates or Pause requests
-                    if (cycles % 5000 == 0) 
+                    
+                    if (k == ConsoleKey.UpArrow) { _consoleScroll++; RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt); }
+                    else if (k == ConsoleKey.DownArrow) { _consoleScroll = Math.Max(0, _consoleScroll - 1); RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt); }
+                    else if (k == ConsoleKey.End) { _consoleScroll = 0; RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt); }
+                    else if (k == ConsoleKey.Q) { session.State.Halted = true; break; }
+                    else if (k == ConsoleKey.R) { isManual = false; continue; } 
+                    else if (k == ConsoleKey.Enter || k == ConsoleKey.Spacebar)
                     {
+                        perfTimer.Start();
+                        if (isPipeline) session.PipelinedRunner?.Step(cycles);
+                        else session.SimpleRunner?.Run(1);
+                        cycles++;
+                        perfTimer.Stop();
+                        RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt);
+                    }
+                }
+                else
+                {
+                    perfTimer.Start();
+                    if (isPipeline) session.PipelinedRunner?.Step(cycles);
+                    else session.SimpleRunner?.Run(1);
+                    cycles++;
+                    
+                    if (cycles % 2000 == 0)
+                    {
+                        perfTimer.Stop(); 
                         if (Console.KeyAvailable)
                         {
-                            sw.Stop();
-                            RenderUI(session, cycles, isPipeline, sw.Elapsed);
+                            RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt);
                             Console.ReadKey(true); 
                             
-                            Console.SetCursorPosition(0, 30);
-                            Console.ForegroundColor = ConsoleColor.Yellow;
-                            Console.WriteLine("\n[PAUSED] Switched to Manual Mode. Press Enter to Step, 'R' to Resume.");
+                            Console.SetCursorPosition(0, _windowHeight - 2);
+                            Console.BackgroundColor = ConsoleColor.DarkYellow;
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.Write(" [PAUSED] Manual Mode. Enter: Step | 'R': Resume ");
                             Console.ResetColor();
                             
                             var nextKey = Console.ReadKey(true).Key;
-                            if (nextKey == ConsoleKey.R) sw.Start();
-                            else if (nextKey == ConsoleKey.Q) { session.State.Halted = true; break; }
-                            else { isManual = true; sw.Start(); }
+                            if (nextKey == ConsoleKey.R) { /* Resume */ }
+                            else if (nextKey == ConsoleKey.Q) { session.State.Halted = true; }
+                            else { isManual = true; } 
                         }
-                        else RenderUI(session, cycles, isPipeline, sw.Elapsed);
+                        else
+                        {
+                             RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt);
+                        }
+                        perfTimer.Start();
                     }
                 }
             }
-            sw.Stop();
             
-            RenderUI(session, cycles, isPipeline, sw.Elapsed);
-            
-            Console.SetCursorPosition(0, 32); 
-            Console.WriteLine("\n----------------------------------------");
-            Console.WriteLine(" Execution Report");
-            Console.WriteLine("----------------------------------------");
-            Console.WriteLine($" Status:       {(session.State.Halted ? "HALTED" : "TIMEOUT")}");
-            Console.WriteLine($" Total Cycles: {cycles:N0}");
-            Console.WriteLine($" Time Elapsed: {sw.Elapsed.TotalSeconds:F4} seconds");
-            
-            if (sw.Elapsed.TotalSeconds > 0.001)
-            {
-                double khz = (cycles / sw.Elapsed.TotalSeconds) / 1000.0;
-                Console.WriteLine($" Avg Speed:    {khz:F2} KHz");
-            }
+            perfTimer.Stop();
+            int endRow = RenderUI(session, cycles, isPipeline, perfTimer.Elapsed, showRt);
+            DrawReport(session, cycles, perfTimer.Elapsed, endRow);
+            Console.ReadKey(true);
         }
 
-        static void RenderUI(SimulationSession s, int cycle, bool isPipeline, TimeSpan elapsed)
+        static int RenderUI(SimulationSession s, int cycle, bool isPipeline, TimeSpan elapsed, bool showRt)
         {
             Console.SetCursorPosition(0, 0);
             
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(FormatLineTruncate($" CYCLE: {cycle,-10} | PC: 0x{s.State.Registers.PC:X8} | TIME: {elapsed.TotalSeconds:F2}s"));
-            Console.ResetColor();
-            
+            WriteColorLine(ConsoleColor.Cyan, FormatLineTruncate($" CYCLE: {cycle,-10} | PC: 0x{s.State.Registers.PC:X8} | TIME: {elapsed.TotalSeconds:F4}s"));
+
             Console.WriteLine(FormatLineTruncate(" [Registers]"));
             for(int i=0; i<32; i+=4)
             {
@@ -225,54 +206,213 @@ namespace AetherRISC.CLI
                 Console.WriteLine(FormatLineTruncate($" {r1,-15} {r2,-15} {r3,-15} {r4,-15}"));
             }
 
+            int pipeStartRow = Console.CursorTop;
+
+            if (showRt && isPipeline && s.PipelinedRunner?.Metrics != null)
+            {
+                DrawSidePanel(s.PipelinedRunner.Metrics, 85, 2);
+            }
+
+            // --- UPDATED PIPELINE VISUALIZATION (Added @[PC]) ---
             Console.WriteLine(FormatLineTruncate(" [Pipeline Stages]"));
             if (isPipeline && s.PipelinedRunner != null)
             {
                 var pipe = s.PipelinedRunner.PipelineState;
-                Console.WriteLine(FormatLineTruncate($" IF:  [{FormatHex(pipe.FetchDecode.Instruction)}] Stall:{pipe.FetchDecode.IsStalled} Pred:{pipe.FetchDecode.PredictedTaken}"));
-                Console.WriteLine(FormatLineTruncate($" ID:  [{FormatHex(pipe.DecodeExecute.RawInstruction)}] {FormatMnemonic(pipe.DecodeExecute.DecodedInst?.Mnemonic)}"));
-                Console.WriteLine(FormatLineTruncate($" EX:  [{FormatHex(pipe.ExecuteMemory.RawInstruction)}] {FormatMnemonic(pipe.ExecuteMemory.DecodedInst?.Mnemonic)} Mis:{pipe.ExecuteMemory.Misprediction}"));
-                Console.WriteLine(FormatLineTruncate($" MEM: [{FormatHex(pipe.MemoryWriteback.RawInstruction)}] {FormatMnemonic(pipe.MemoryWriteback.DecodedInst?.Mnemonic)}"));
-                Console.WriteLine(FormatLineTruncate($" WB:  RegWrite:{pipe.MemoryWriteback.RegWrite} Rd:{pipe.MemoryWriteback.Rd} Val:{pipe.MemoryWriteback.FinalResult:X}"));
+                
+                // IF
+                Console.WriteLine(FormatLineTruncate($" IF:  [{FormatHex(pipe.FetchDecode.Instruction)}]@[{pipe.FetchDecode.PC:X8}] Stall:{pipe.FetchDecode.IsStalled} Pred:{pipe.FetchDecode.PredictedTaken}"));
+                
+                // ID
+                Console.WriteLine(FormatLineTruncate($" ID:  [{FormatHex(pipe.DecodeExecute.RawInstruction)}]@[{pipe.DecodeExecute.PC:X8}] {FormatMnemonic(pipe.DecodeExecute.DecodedInst?.Mnemonic)}"));
+                
+                // EX
+                Console.WriteLine(FormatLineTruncate($" EX:  [{FormatHex(pipe.ExecuteMemory.RawInstruction)}]@[{pipe.ExecuteMemory.PC:X8}] {FormatMnemonic(pipe.ExecuteMemory.DecodedInst?.Mnemonic)} Mis:{pipe.ExecuteMemory.Misprediction}"));
+                
+                // MEM
+                Console.WriteLine(FormatLineTruncate($" MEM: [{FormatHex(pipe.MemoryWriteback.RawInstruction)}]@[{pipe.MemoryWriteback.PC:X8}] {FormatMnemonic(pipe.MemoryWriteback.DecodedInst?.Mnemonic)}"));
+                
+                // WB (Updated to match other stages + RegWrite info)
+                Console.WriteLine(FormatLineTruncate($" WB:  [{FormatHex(pipe.MemoryWriteback.RawInstruction)}]@[{pipe.MemoryWriteback.PC:X8}] RegWrite:{pipe.MemoryWriteback.RegWrite} Rd:{pipe.MemoryWriteback.Rd} Val:{pipe.MemoryWriteback.FinalResult:X}"));
             }
             else
             {
                 for(int i=0; i<5; i++) Console.WriteLine(FormatLineTruncate(""));
             }
+            // ----------------------------------------------------
 
-            // ... (Rest of existing UI code) ...
-            Console.WriteLine(FormatLineTruncate(" [Console Output]"));
+            Console.WriteLine(FormatLineTruncate($" [Console Output] (Scroll: {_consoleScroll})"));
             Console.BackgroundColor = ConsoleColor.DarkBlue;
             Console.ForegroundColor = ConsoleColor.White;
             
             var consoleLines = GetWrappedLines(s.OutputBuffer.ToString(), Console.WindowWidth - 2);
             int totalLines = consoleLines.Count;
-            int start = Math.Max(0, totalLines - 5);
+            int viewportHeight = 8;
             
-            for(int i=0; i<5; i++) 
+            int endLine = totalLines - _consoleScroll;
+            if (endLine > totalLines) endLine = totalLines;
+            
+            int startLine = endLine - viewportHeight;
+            if (startLine < 0) startLine = 0;
+
+            for(int i = 0; i < viewportHeight; i++) 
             {
-                string content = (start + i < totalLines) ? consoleLines[start + i] : "";
+                int lineIdx = startLine + i;
+                string content = (lineIdx < endLine && lineIdx < totalLines) ? consoleLines[lineIdx] : "";
                 Console.WriteLine(FormatLineTruncate(" " + content));
             }
             Console.ResetColor();
 
-            Console.WriteLine(FormatLineTruncate(" [Controls] Enter: Step | R: Run All | Q: Quit"));
+            Console.WriteLine(FormatLineTruncate(" [Controls] Arrows: Scroll | Enter: Step | R: Run All | Q: Quit"));
+            
+            return Console.CursorTop; 
+        }
+
+        static void DrawReport(SimulationSession s, int cycles, TimeSpan elapsed, int startRow)
+        {
+            Console.SetCursorPosition(0, startRow);
+            for(int i=startRow; i<_windowHeight; i++) Console.WriteLine(FormatLineTruncate(""));
+            
+            Console.SetCursorPosition(0, startRow);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("========================================");
+            Console.WriteLine(" FINAL PERFORMANCE REPORT");
+            Console.WriteLine("========================================");
+            Console.ResetColor();
+
+            var metrics = s.PipelinedRunner?.Metrics;
+            
+            WriteMetric("Total Cycles", cycles, ConsoleColor.White);
+            WriteMetric("Instructions", metrics?.InstructionsRetired ?? 0, ConsoleColor.White);
+            WriteMetric("IPC", metrics?.IPC ?? 0, ConsoleColor.Cyan, "F2", " (Instr/Cycle)");
+            WriteMetric("CPI", metrics?.CPI ?? 0, ConsoleColor.Cyan, "F2", " (Cycles/Instr)");
+
+            Console.WriteLine("----------------------------------------");
+            
+            if (metrics != null)
+            {
+                var accColor = metrics.BranchAccuracy > 90 ? ConsoleColor.Green : (metrics.BranchAccuracy > 70 ? ConsoleColor.Yellow : ConsoleColor.Red);
+                WriteMetric("Accuracy", metrics.BranchAccuracy, accColor, "F2", "%");
+
+                Console.Write($" {"Misses",-16} ");
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Write($"{metrics.BranchMisses:N0}");
+                Console.ResetColor();
+                Console.Write(" / ");
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.WriteLine($"{metrics.TotalBranches:N0}");
+                
+                double flushPerc = (double)metrics.ControlHazardFlushes / Math.Max(1, metrics.TotalCycles) * 100.0;
+                WriteMetric("Flushes", metrics.ControlHazardFlushes, ConsoleColor.Yellow, "N0", $" ({flushPerc:F1}%)");
+                
+                double stallPerc = (double)metrics.DataHazardStalls / Math.Max(1, metrics.TotalCycles) * 100.0;
+                WriteMetric("Stalls", metrics.DataHazardStalls, ConsoleColor.Yellow, "N0", $" ({stallPerc:F1}%)");
+            }
+
+            Console.WriteLine("----------------------------------------");
+            double time = elapsed.TotalSeconds;
+            double khz = (time > 0) ? (cycles / time) / 1000.0 : 0;
+            double mips = (time > 0 && metrics != null) ? (metrics.InstructionsRetired / time) / 1000000.0 : 0;
+            
+            WriteMetric("Sim Time", time, ConsoleColor.Cyan, "F4", "s");
+            WriteMetric("Frequency", khz, ConsoleColor.Cyan, "F2", " kHz");
+            WriteMetric("Speed", mips, ConsoleColor.Cyan, "F2", " MIPS");
+            
+            Console.WriteLine("\nPress any key to return to menu...");
+        }
+
+        static void WriteMetric(string label, object value, ConsoleColor valColor, string format = "N0", string suffix = "")
+        {
+            Console.Write($" {label,-16} "); 
+            Console.ForegroundColor = valColor;
+            Console.Write(string.Format("{0:" + format + "}", value));
+            Console.ResetColor();
+            Console.WriteLine(suffix);
+        }
+
+        static void WriteColorLine(ConsoleColor color, string text)
+        {
+            Console.ForegroundColor = color;
+            Console.WriteLine(text);
+            Console.ResetColor();
+        }
+
+        static void DrawSidePanel(PerformanceMetrics m, int leftX, int startY)
+        {
+            void PrintAt(int y, string label, object val, ConsoleColor color, string fmt = "N0", string sfx = "")
+            {
+                Console.SetCursorPosition(leftX, y);
+                Console.Write($"{label}: ");
+                Console.ForegroundColor = color;
+                Console.Write(string.Format("{0:" + fmt + "}", val));
+                Console.ResetColor();
+                Console.Write(sfx);
+            }
+
+            PrintAt(startY + 0, "REAL-TIME METRICS", "", ConsoleColor.White);
+            PrintAt(startY + 1, "------------------", "", ConsoleColor.Gray);
+            PrintAt(startY + 2, "IPC       ", m.IPC, ConsoleColor.Cyan, "F2");
+            PrintAt(startY + 3, "Retired   ", m.InstructionsRetired, ConsoleColor.White);
+            
+            var accColor = m.BranchAccuracy > 90 ? ConsoleColor.Green : (m.BranchAccuracy > 70 ? ConsoleColor.Yellow : ConsoleColor.Red);
+            PrintAt(startY + 5, "Accuracy  ", m.BranchAccuracy, accColor, "F2", "%");
+            PrintAt(startY + 6, "Br. Hits  ", m.BranchHits, ConsoleColor.Green);
+            PrintAt(startY + 7, "Br. Miss  ", m.BranchMisses, ConsoleColor.Red);
+            PrintAt(startY + 9, "Flushes   ", m.ControlHazardFlushes, ConsoleColor.Yellow);
+            PrintAt(startY + 10,"Stalls    ", m.DataHazardStalls, ConsoleColor.Yellow);
+        }
+
+        static class MenuHandler
+        {
+            public static int Show(string title, string subtitle, string[] options, int selected = 0)
+            {
+                Console.Clear(); 
+                
+                while (true)
+                {
+                    Console.SetCursorPosition(0, 0);
+                    
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine(FormatLineTruncate("========================================"));
+                    Console.WriteLine(FormatLineTruncate($"       {title}")); 
+                    Console.WriteLine(FormatLineTruncate("========================================"));
+                    Console.ResetColor();
+                    
+                    if(!string.IsNullOrEmpty(subtitle)) Console.WriteLine(FormatLineTruncate($" {subtitle}"));
+                    Console.WriteLine(FormatLineTruncate("")); 
+                    
+                    for (int i = 0; i < options.Length; i++)
+                    {
+                        if (i == selected)
+                        {
+                            Console.BackgroundColor = ConsoleColor.Gray;
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.WriteLine(FormatLineTruncate($" > {options[i].PadRight(30)} "));
+                            Console.ResetColor();
+                        }
+                        else
+                        {
+                            Console.WriteLine(FormatLineTruncate($"   {options[i]}"));
+                        }
+                    }
+                    Console.WriteLine(FormatLineTruncate("")); 
+                    Console.WriteLine(FormatLineTruncate(" [Arrows: Move | Enter: Select]"));
+
+                    var key = Console.ReadKey(true).Key;
+                    if (key == ConsoleKey.UpArrow) { selected--; if (selected < 0) selected = options.Length - 1; }
+                    else if (key == ConsoleKey.DownArrow) { selected++; if (selected >= options.Length) selected = 0; }
+                    else if (key == ConsoleKey.Enter || key == ConsoleKey.Spacebar) return selected;
+                    else if (key == ConsoleKey.Escape) return -1;
+                }
+            }
         }
 
         static List<string> GetWrappedLines(string fullText, int width)
         {
             var result = new List<string>();
             var logicalLines = fullText.Replace("\r\n", "\n").Split('\n');
-            
-            foreach (var line in logicalLines)
-            {
-                if (string.IsNullOrEmpty(line))
-                {
-                    result.Add("");
-                    continue;
-                }
-                for (int i = 0; i < line.Length; i += width)
-                {
+            foreach (var line in logicalLines) {
+                if (string.IsNullOrEmpty(line)) { result.Add(""); continue; }
+                for (int i = 0; i < line.Length; i += width) {
                     int len = Math.Min(width, line.Length - i);
                     result.Add(line.Substring(i, len));
                 }

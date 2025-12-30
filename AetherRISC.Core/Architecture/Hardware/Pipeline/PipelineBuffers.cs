@@ -1,153 +1,67 @@
 using System;
-using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline
 {
     public class PipelineBuffers
     {
-        public FetchDecodeBuffer FetchDecode { get; set; } = new();
-        public DecodeExecuteBuffer DecodeExecute { get; set; } = new();
-        public ExecuteMemoryBuffer ExecuteMemory { get; set; } = new();
-        public MemoryWritebackBuffer MemoryWriteback { get; set; } = new();
+        public int Width { get; }
+        public int FetchWidth { get; }
 
-        public void Flush()
+        public PipelineStageBuffer FetchDecode { get; }
+        public PipelineStageBuffer DecodeExecute { get; }
+        public PipelineStageBuffer ExecuteMemory { get; }
+        public PipelineStageBuffer MemoryWriteback { get; }
+
+        public PipelineBuffers(ArchitectureSettings settings)
+        {
+            Width = settings.PipelineWidth;
+            FetchWidth = (int)Math.Ceiling(Width * settings.FetchBufferRatio);
+
+            FetchDecode = new PipelineStageBuffer(FetchWidth);
+            DecodeExecute = new PipelineStageBuffer(Width);
+            ExecuteMemory = new PipelineStageBuffer(Width);
+            MemoryWriteback = new PipelineStageBuffer(Width);
+        }
+
+        public void FlushAll()
         {
             FetchDecode.Flush();
             DecodeExecute.Flush();
             ExecuteMemory.Flush();
             MemoryWriteback.Flush();
         }
+
+        public void ResetStalls()
+        {
+            FetchDecode.IsStalled = false;
+            DecodeExecute.IsStalled = false;
+            ExecuteMemory.IsStalled = false;
+            MemoryWriteback.IsStalled = false;
+        }
     }
 
-    public class FetchDecodeBuffer
+    public class PipelineStageBuffer
     {
-        public uint Instruction { get; set; }
-        public ulong PC { get; set; }
-        
-        public bool PredictedTaken { get; set; }
-        public ulong PredictedTarget { get; set; }
-
+        public PipelineMicroOp[] Slots { get; }
         public bool IsStalled { get; set; }
-        public bool IsValid { get; set; } = false;
-        public bool IsEmpty { get; set; } = true;
+        public bool IsEmpty { get; private set; } = true;
+
+        public PipelineStageBuffer(int width)
+        {
+            Slots = new PipelineMicroOp[width];
+            for (int i = 0; i < width; i++) Slots[i] = new PipelineMicroOp();
+        }
 
         public void Flush()
         {
-            Instruction = 0;
-            PC = 0;
-            PredictedTaken = false;
-            PredictedTarget = 0;
             IsStalled = false;
-            IsValid = false;
             IsEmpty = true;
+            for (int i = 0; i < Slots.Length; i++)
+            {
+                Slots[i].Reset();
+            }
         }
-    }
-
-    public class DecodeExecuteBuffer
-    {
-        public IInstruction? DecodedInst { get; set; }
-        public uint RawInstruction { get; set; }
-        public ulong PC { get; set; }
         
-        public bool PredictedTaken { get; set; }
-        public ulong PredictedTarget { get; set; }
-
-        public int Rd { get; set; }
-        public int Immediate { get; set; }
-        
-        public bool RegWrite { get; set; }
-        public bool MemRead { get; set; }
-        public bool MemWrite { get; set; }
-        
-        public ulong? ForwardedRs1 { get; set; }
-        public ulong? ForwardedRs2 { get; set; }
-
-        public bool IsEmpty { get; set; } = true;
-
-        public void Flush()
-        {
-            DecodedInst = null;
-            RawInstruction = 0;
-            PC = 0;
-            PredictedTaken = false;
-            PredictedTarget = 0;
-            Rd = 0;
-            Immediate = 0;
-            RegWrite = false;
-            MemRead = false;
-            MemWrite = false;
-            ForwardedRs1 = null;
-            ForwardedRs2 = null;
-            IsEmpty = true;
-        }
-    }
-
-    public class ExecuteMemoryBuffer
-    {
-        public IInstruction? DecodedInst { get; set; }
-        public uint RawInstruction { get; set; }
-        public ulong PC { get; set; }
-        
-        public ulong AluResult { get; set; }
-        public ulong StoreValue { get; set; }
-        public int Rd { get; set; }
-        
-        public bool RegWrite { get; set; }
-        public bool MemRead { get; set; }
-        public bool MemWrite { get; set; }
-        
-        public bool BranchTaken { get; set; } 
-        
-        public bool Misprediction { get; set; }
-        public ulong CorrectTarget { get; set; }
-        
-        // --- NEW: For Predictor Update ---
-        public ulong ActualTarget { get; set; }
-        // ---------------------------------
-
-        public bool IsEmpty { get; set; } = true;
-
-        public void Flush()
-        {
-            DecodedInst = null;
-            RawInstruction = 0;
-            PC = 0;
-            AluResult = 0;
-            StoreValue = 0;
-            Rd = 0;
-            RegWrite = false;
-            MemRead = false;
-            MemWrite = false;
-            BranchTaken = false;
-            Misprediction = false;
-            CorrectTarget = 0;
-            ActualTarget = 0;
-            IsEmpty = true;
-        }
-    }
-
-    public class MemoryWritebackBuffer
-    {
-        public IInstruction? DecodedInst { get; set; }
-        public uint RawInstruction { get; set; }
-        public ulong PC { get; set; }
-        
-        public ulong FinalResult { get; set; }
-        public int Rd { get; set; }
-        
-        public bool RegWrite { get; set; }
-        
-        public bool IsEmpty { get; set; } = true;
-
-        public void Flush()
-        {
-            DecodedInst = null;
-            RawInstruction = 0;
-            PC = 0;
-            FinalResult = 0;
-            Rd = 0;
-            RegWrite = false;
-            IsEmpty = true;
-        }
+        public void SetHasContent() => IsEmpty = false;
     }
 }

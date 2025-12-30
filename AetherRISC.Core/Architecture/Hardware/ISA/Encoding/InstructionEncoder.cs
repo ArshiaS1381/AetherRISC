@@ -68,7 +68,6 @@ public static partial class InstructionEncoder
                 word |= ((((uint)imm >> 5) & 0x7F) << 25);
                 break;
             case RiscvEncodingType.B:
-                // B-type: imm[12|10:5] in [31|30:25], imm[4:1|11] in [11:8|7]
                 uint b12   = (uint)((imm >> 12) & 1);
                 uint b11   = (uint)((imm >> 11) & 1);
                 uint b10_5 = (uint)((imm >> 5) & 0x3F);
@@ -115,7 +114,6 @@ public static partial class InstructionEncoder
         return word;
     }
 
-    // --- Helpers used by Generated Code ---
     public static uint GenR(uint op, uint f3, uint f7, IInstruction i) => 
         (op & 0x7F) | ((uint)(i.Rd & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((uint)(i.Rs1 & 0x1F) << 15) | ((uint)(i.Rs2 & 0x1F) << 20) | ((f7 & 0x7F) << 25);
     

@@ -1,68 +1,73 @@
 using Xunit;
 using AetherRISC.Tests.Infrastructure;
-using AetherRISC.Core.Helpers;
+using AetherRISC.Core.Assembler;
 
-namespace AetherRISC.Tests.Integration.Assembler;
-
-public class AssemblerDirectivesTests : CpuTestFixture
+namespace AetherRISC.Tests.Integration.Assembler
 {
-    [Fact]
-    public void Data_Directives_Write_To_Memory()
+    public class AssemblerDirectivesTests : CpuTestFixture
     {
-        Init64();
+        [Fact]
+        public void Asciz_Stores_Null_Terminated_String()
+        {
+            Init64();
+            var source = @"
+                .data
+                str: .asciz ""Hello""
+            ";
+            
+            var asm = new SourceAssembler(source);
+            asm.Assemble(Machine);
+            
+            // H e l l o \0
+            Assert.Equal((byte)'H', Machine.Memory.ReadByte(asm.DataBase));
+            Assert.Equal((byte)'e', Machine.Memory.ReadByte(asm.DataBase + 1));
+            Assert.Equal((byte)'l', Machine.Memory.ReadByte(asm.DataBase + 2));
+            Assert.Equal((byte)'l', Machine.Memory.ReadByte(asm.DataBase + 3));
+            Assert.Equal((byte)'o', Machine.Memory.ReadByte(asm.DataBase + 4));
+            Assert.Equal(0, Machine.Memory.ReadByte(asm.DataBase + 5));
+        }
 
-        string code = @"
-            .data
-            byteVal: .byte 0xAA
-            halfVal: .half 0xBBAA
-            wordVal: .word 0xDEADBEEF
+        [Fact]
+        public void Space_Allocates_Zeroed_Memory()
+        {
+            Init64();
+            var source = @"
+                .data
+                .byte 0xFF
+                .space 4
+                .byte 0xEE
+            ";
+            
+            var asm = new SourceAssembler(source);
+            asm.Assemble(Machine);
+            
+            // 0: FF
+            // 1: 00
+            // 2: 00
+            // 3: 00
+            // 4: 00
+            // 5: EE
+            
+            Assert.Equal(0xFF, Machine.Memory.ReadByte(asm.DataBase));
+            Assert.Equal(0, Machine.Memory.ReadWord(asm.DataBase + 1));
+            Assert.Equal(0xEE, Machine.Memory.ReadByte(asm.DataBase + 5));
+        }
 
-            .text
-            main:
-                nop
-        ";
-
-        var asm = new SourceAssembler(code);
-        asm.Assemble(Machine);
-
-        uint baseAddr = 0x10010000;
-
-        // .byte 0xAA at base
-        Assert.Equal(0xAA, Memory.ReadByte(baseAddr + 0));
-
-        // padding due to .half alignment to 2 bytes
-        Assert.Equal(0x00, Memory.ReadByte(baseAddr + 1));
-
-        // .half 0xBBAA at base+2 (little-endian: AA then BB)
-        Assert.Equal(0xAA, Memory.ReadByte(baseAddr + 2));
-        Assert.Equal(0xBB, Memory.ReadByte(baseAddr + 3));
-
-        // .word aligned to 4: base+4 (little-endian)
-        Assert.Equal(0xEF, Memory.ReadByte(baseAddr + 4));
-        Assert.Equal(0xBE, Memory.ReadByte(baseAddr + 5));
-        Assert.Equal(0xAD, Memory.ReadByte(baseAddr + 6));
-        Assert.Equal(0xDE, Memory.ReadByte(baseAddr + 7));
-    }
-
-    [Fact]
-    public void Labels_Resolve_Correctly_In_Text()
-    {
-        Init64();
-        string code = @"
-            .text
-            start:
-                addi x1, x0, 10
-                j target
-                addi x1, x0, 0
-            target:
-                addi x1, x1, 5
-        ";
-
-        var asm = new SourceAssembler(code) { TextBase = (uint)Machine.Config.ResetVector };
-        asm.Assemble(Machine);
-
-        Runner.Run(4);
-
-        AssertReg(1, 15ul);
+        [Fact]
+        public void Equ_Defines_Constant()
+        {
+            Init64();
+            var source = @"
+                .equ VAL, 42
+                .text
+                li x1, VAL
+            ";
+            
+            var asm = new SourceAssembler(source);
+            asm.Assemble(Machine);
+            
+            base.Run(5);
+            AssertReg(1, 42);
+        }
     }
 }

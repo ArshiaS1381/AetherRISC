@@ -1,9 +1,10 @@
 using AetherRISC.Core.Abstractions.Interfaces;
 using System;
+using System.Runtime.CompilerServices;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors
 {
-    public class GsharePredictor : IBranchPredictor
+    public unsafe class GsharePredictor : IBranchPredictor
     {
         public string Name => "Gshare (Global History)";
 
@@ -12,64 +13,70 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors
         private const int Mask = TableSize - 1;
 
         private readonly byte[] _pht = new byte[TableSize];
-        private uint _globalHistory = 0;
-
-        // FIX: Added BTB. Gshare predicts direction, but needs a BTB for the Target.
         private readonly ulong[] _targetBuffer = new ulong[TableSize];
         private readonly ulong[] _tagBuffer = new ulong[TableSize];
+        
+        private uint _globalHistory = 0;
 
         public GsharePredictor()
         {
             Array.Fill(_pht, (byte)1); 
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public BranchPrediction Predict(ulong currentPC)
         {
-            // 1. Prediction (Direction)
-            // Use >> 1 for Compressed support
             uint pcPart = (uint)((currentPC >> 1) & Mask);
             uint index = pcPart ^ _globalHistory;
             
-            byte state = _pht[index];
-            bool predictTaken = state >= 2;
+            bool predictTaken;
+            ulong target = 0;
 
-            // 2. Target Resolution (BTB)
-            // We use standard PC indexing for BTB (uncorrelated), 
-            // though some impls use Gshare index for BTB too. Simple is better here.
-            long btbIndex = (long)((currentPC >> 1) & Mask);
-            
-            if (_tagBuffer[btbIndex] != currentPC)
+            fixed (byte* phtPtr = _pht)
+            fixed (ulong* targetPtr = _targetBuffer)
+            fixed (ulong* tagPtr = _tagBuffer)
             {
-                // Unknown branch? Predict NT safely.
-                return new BranchPrediction { PredictedTaken = false, TargetAddress = 0 };
+                byte state = phtPtr[index];
+                predictTaken = state >= 2;
+
+                if (tagPtr[pcPart] == currentPC)
+                {
+                    target = targetPtr[pcPart];
+                }
             }
+
+            if (target == 0) predictTaken = false;
 
             return new BranchPrediction 
             { 
                 PredictedTaken = predictTaken, 
-                TargetAddress = predictTaken ? _targetBuffer[btbIndex] : 0 
+                TargetAddress = target 
             };
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Update(ulong branchPC, bool actuallyTaken, ulong actualTarget)
         {
             uint pcPart = (uint)((branchPC >> 1) & Mask);
             uint index = pcPart ^ _globalHistory;
 
-            // Update PHT
-            byte state = _pht[index];
-            if (actuallyTaken) { if (state < 3) state++; }
-            else { if (state > 0) state--; }
-            _pht[index] = state;
+            fixed (byte* phtPtr = _pht)
+            {
+                byte state = phtPtr[index];
+                if (actuallyTaken) { if (state < 3) state++; }
+                else { if (state > 0) state--; }
+                phtPtr[index] = state;
+            }
 
-            // Update Global History
             _globalHistory = (_globalHistory << 1) | (actuallyTaken ? 1u : 0u);
             _globalHistory &= Mask;
 
-            // FIX: Update BTB
-            long btbIndex = (long)((branchPC >> 1) & Mask);
-            _tagBuffer[btbIndex] = branchPC;
-            if (actuallyTaken) _targetBuffer[btbIndex] = actualTarget;
+            fixed (ulong* tagPtr = _tagBuffer)
+            fixed (ulong* targetPtr = _targetBuffer)
+            {
+                tagPtr[pcPart] = branchPC;
+                if (actuallyTaken) targetPtr[pcPart] = actualTarget;
+            }
         }
     }
 }

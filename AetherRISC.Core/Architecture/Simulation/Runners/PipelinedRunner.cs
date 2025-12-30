@@ -13,12 +13,12 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
         private readonly MachineState _state;
         private readonly ISimulationLogger _logger;
         private readonly PipelineController _controller;
+        
         private readonly InstructionDecoder _visDecoder;
 
         public PipelineBuffers PipelineState => _controller.Buffers;
-        
-        // Expose Metrics
         public PerformanceMetrics Metrics => _controller.Metrics;
+        public IBranchPredictor Predictor => _controller.Predictor;
 
         public PipelinedRunner(MachineState state, ISimulationLogger logger, string branchPredictor, ArchitectureSettings settings)
         {
@@ -42,7 +42,7 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
             _logger.FinalizeSession();
         }
 
-        public void Step(int cycleCount) => StepInternal(cycleCount);
+        public void Step(int cycleCount) { for(int i=0; i<cycleCount; i++) StepInternal(i); }
 
         private void StepInternal(int cycleIndex)
         {
@@ -51,7 +51,7 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
             try { _controller.Cycle(); }
             catch (Exception ex)
             {
-                _logger.Log("ERR", $"Pipeline Fault: {ex.Message}");
+                _logger.Log("ERR", $@"Pipeline Fault: {ex.Message}");
                 _state.Halted = true;
             }
 
@@ -65,12 +65,26 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
             {
                 _logger.Log("ID", "** STALLED **");
             }
-            else if (!b.FetchDecode.IsEmpty)
+            else
             {
-                var inst = _visDecoder.Decode(b.FetchDecode.Instruction);
-                string predInfo = b.FetchDecode.PredictedTaken ? $" [P:TAKEN 0x{b.FetchDecode.PredictedTarget:X}]" : "";
-                if (inst != null) _logger.LogStageDecode(b.FetchDecode.PC, b.FetchDecode.Instruction, inst);
-                if (b.FetchDecode.PredictedTaken) _logger.Log("ID", predInfo);
+                for(int i=0; i<b.Width; i++)
+                {
+                     var op = b.FetchDecode.Slots[i];
+                     if(op.Valid) 
+                     {
+                         // Use local decoder for visualization if needed
+                         var inst = _visDecoder.Decode(op.RawInstruction);
+                         string pred = op.PredictedTaken ? " [P:TAKEN]" : "";
+                         
+                         // Fix: Handle null instruction safely
+                         if (inst != null)
+                            _logger.LogStageDecode(op.PC, op.RawInstruction, inst);
+                         else 
+                            _logger.Log("ID", $@"Unknown/Bubble @{op.PC:X}");
+
+                         if (op.PredictedTaken) _logger.Log("ID", $@" {pred} @{op.PredictedTarget:X}");
+                     }
+                }
             }
         }
     }

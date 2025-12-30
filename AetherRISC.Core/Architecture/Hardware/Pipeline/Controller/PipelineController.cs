@@ -3,8 +3,10 @@ using AetherRISC.Core.Abstractions.Interfaces;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Stages;
 using AetherRISC.Core.Architecture.Simulation.State;
-using AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors;
 using AetherRISC.Core.Abstractions.Diagnostics;
+using AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors;
+using AetherRISC.Core.Helpers;
+using AetherRISC.Core.Architecture.Hardware.ISA.Pseudo;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
 {
@@ -12,8 +14,6 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
     {
         public PipelineBuffers Buffers { get; }
         public IBranchPredictor Predictor { get; }
-        
-        // Public Metrics for the Runner to read
         public PerformanceMetrics Metrics { get; } = new PerformanceMetrics();
 
         private readonly FetchStage _fetch;
@@ -25,110 +25,102 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
         private readonly DataHazardUnit _dataHazard;
         private readonly StructuralHazardUnit _structHazard;
         private readonly ControlHazardUnit _controlHazard;
+        
         private readonly MachineState _state;
-        private readonly ArchitectureSettings _settings;
 
         public PipelineController(MachineState state, string predictorType, ArchitectureSettings settings)
         {
             _state = state;
-            _settings = settings ?? new ArchitectureSettings();
-            Buffers = new PipelineBuffers();
-            Predictor = PredictorFactory.Create(predictorType, _settings);
-
-            _fetch = new FetchStage(state);
-            _decode = new DecodeStage(state);
-            _execute = new ExecuteStage(state);
+            Buffers = new PipelineBuffers(settings);
+            Predictor = PredictorFactory.Create(predictorType, settings);
+            Metrics.PipelineWidth = settings.PipelineWidth;
+            
+            _fetch = new FetchStage(state, settings);
+            _decode = new DecodeStage(state, settings);
+            _execute = new ExecuteStage(state, settings);
             _memory = new MemoryStage(state);
             _writeback = new WritebackStage(state);
-
+            
             _dataHazard = new DataHazardUnit();
+            _dataHazard.StateContext = state; 
+            _dataHazard.Settings = settings;
+
             _structHazard = new StructuralHazardUnit();
             _controlHazard = new ControlHazardUnit();
         }
 
         public void Cycle()
         {
-            // [METRICS] Cycle Count
             Metrics.TotalCycles++;
-            ulong pcAtStartOfCycle = _state.Registers.PC;
+            Buffers.ResetStalls();
 
-            // 1. Resolve Hazards
+            SimpleProfiler.Start(SimpleProfiler.Hazard_Data);
             _dataHazard.Resolve(Buffers);
-            _structHazard.DetectAndHandle(Buffers);
-            
-            // [METRICS] Stall Counting (FIXED: Only check FetchDecode)
-            // If the front-end is stalled, the whole pipeline is effectively stalling for data.
-            if (Buffers.FetchDecode.IsStalled)
-            {
-                Metrics.DataHazardStalls++;
-            }
+            SimpleProfiler.Stop(SimpleProfiler.Hazard_Data);
 
-            // 2. Commit (Writeback)
+            SimpleProfiler.Start(SimpleProfiler.Hazard_Struct);
+            _structHazard.DetectAndHandle(Buffers);
+            if (Buffers.FetchDecode.IsStalled) Metrics.DataHazardStalls++;
+            SimpleProfiler.Stop(SimpleProfiler.Hazard_Struct);
+
+            SimpleProfiler.Start(SimpleProfiler.Stage_WB);
             _writeback.Run(Buffers);
             
-            // [METRICS] Retired Instruction Counting
-            if (!Buffers.MemoryWriteback.IsEmpty) Metrics.InstructionsRetired++;
-
-            if (_state.Halted) { Buffers.Flush(); return; }
-
-            // 3. Memory
-            _memory.Run(Buffers);
-
-            // 4. Execute
-            _execute.Run(Buffers); 
-            ulong pcAfterExecute = _state.Registers.PC;
-            bool executeChangedPC = (pcAfterExecute != pcAtStartOfCycle);
-
-            // [METRICS] Branch/Jump Analysis
-            if (!Buffers.ExecuteMemory.IsEmpty && Buffers.ExecuteMemory.DecodedInst != null)
+            // --- Retirement Logic ---
+            for(int i=0; i<Buffers.Width; i++) 
             {
-                var inst = Buffers.ExecuteMemory.DecodedInst;
-                bool isMisprediction = Buffers.ExecuteMemory.Misprediction;
-
-                if (inst.IsBranch) // Conditional
-                {
-                    Metrics.TotalBranches++;
-                    if (isMisprediction) Metrics.BranchMisses++;
-                    else Metrics.BranchHits++;
-                    
-                    Predictor.Update(Buffers.ExecuteMemory.PC, Buffers.ExecuteMemory.BranchTaken, Buffers.ExecuteMemory.ActualTarget);
-                }
-                else if (inst.IsJump) // Unconditional
-                {
-                    Metrics.TotalJumps++;
-                    Predictor.Update(Buffers.ExecuteMemory.PC, true, Buffers.ExecuteMemory.ActualTarget);
-                }
-            }
-
-            // 5. Control Hazards
-            bool mispredictionOccurred = _controlHazard.DetectAndHandle(Buffers);
-            
-            // [METRICS] Flush Counting
-            if (mispredictionOccurred) Metrics.ControlHazardFlushes++;
-
-            // 6. Decode
-            _decode.Run(Buffers);
-            
-            // 7. Fetch Logic (Re-applying the Cycle Accuracy Fix)
-            if (_settings.EnableEarlyBranchResolution)
-            {
-                // [FAST MODE] 1 Cycle Penalty
-                _fetch.Run(Buffers, Predictor); 
-            }
-            else
-            {
-                // [REALISTIC MODE] 2 Cycle Penalty
-                // Force Fetch to use the PC from start of cycle
-                _state.Registers.PC = pcAtStartOfCycle;
-                _fetch.Run(Buffers, Predictor);
+                var slot = Buffers.MemoryWriteback.Slots[i];
+                if (_state.Halted) break;
                 
-                // If Execute actually jumped, it overrides Fetch
-                if (executeChangedPC)
+                if (slot.Valid && !slot.IsBubble) 
                 {
-                    _state.Registers.PC = pcAfterExecute;
-                    Buffers.FetchDecode.Flush();
+                    Metrics.InstructionsRetired++;
+                    
+                    // Check for Fusion to calculate Real ISA count
+                    if (slot.DecodedInst is FusedComputationalInstruction || 
+                        slot.DecodedInst is FusedLoadInstruction)
+                    {
+                        Metrics.IsaInstructionsRetired += 2; // Fused ops represent 2 ISA insts
+                    }
+                    else
+                    {
+                        Metrics.IsaInstructionsRetired += 1;
+                    }
+                }
+                slot.Reset();
+            }
+            SimpleProfiler.Stop(SimpleProfiler.Stage_WB);
+
+            if (_state.Halted) { Buffers.FlushAll(); return; }
+
+            SimpleProfiler.Start(SimpleProfiler.Stage_Mem);
+            _memory.Run(Buffers);
+            SimpleProfiler.Stop(SimpleProfiler.Stage_Mem);
+
+            SimpleProfiler.Start(SimpleProfiler.Stage_Ex);
+            _execute.Run(Buffers);
+            for(int i=0; i<Buffers.Width; i++)
+            {
+                var op = Buffers.ExecuteMemory.Slots[i];
+                if(op.Valid && !op.IsBubble && op.DecodedInst != null && op.DecodedInst.IsBranch) {
+                    Metrics.TotalBranches++;
+                    if(op.Misprediction) Metrics.BranchMisses++; else Metrics.BranchHits++;
+                    Predictor.Update(op.PC, op.BranchTaken, op.ActualTarget);
                 }
             }
+            SimpleProfiler.Stop(SimpleProfiler.Stage_Ex);
+
+            SimpleProfiler.Start(SimpleProfiler.Hazard_Ctrl);
+            if (_controlHazard.DetectAndHandle(Buffers)) Metrics.ControlHazardFlushes++;
+            SimpleProfiler.Stop(SimpleProfiler.Hazard_Ctrl);
+
+            SimpleProfiler.Start(SimpleProfiler.Stage_Dec);
+            _decode.Run(Buffers);
+            SimpleProfiler.Stop(SimpleProfiler.Stage_Dec);
+            
+            SimpleProfiler.Start(SimpleProfiler.Stage_Fetch);
+            _fetch.Run(Buffers, Predictor); 
+            SimpleProfiler.Stop(SimpleProfiler.Stage_Fetch);
         }
     }
 }

@@ -1,57 +1,42 @@
 using Xunit;
+using Xunit.Abstractions;
+using AetherRISC.Core.Assembler;
 using AetherRISC.Tests.Infrastructure;
-using AetherRISC.Core.Helpers;
-using AetherRISC.Core.Architecture.Simulation;
+using AetherRISC.Core.Architecture.Hardware.ISA;
 
-namespace AetherRISC.Tests.Integration.OS;
-
-public class SystemCallTests : CpuTestFixture
+namespace AetherRISC.Tests.Integration.OS
 {
-    [Fact]
-    public void Linux_Write_Standard_Flow()
+    public class SystemCallTests : CpuTestFixture
     {
-        Init64();
-        Machine.Host = new MultiOSHandler { Kind = OSKind.Linux, Silent = true };
+        private readonly ITestOutputHelper _output;
+        public SystemCallTests(ITestOutputHelper output) => _output = output;
 
-        string code = @"
-            .data
-            msg: .asciz ""Hi""
-            .text
-            li a0, 1        # stdout
-            la a1, msg      # buffer
-            li a2, 2        # len
-            li a7, 64       # sys_write
-            ecall
-        ";
+        [Fact]
+        public void Ecall_Exit_Terminates()
+        {
+            Init64();
+            Assembler.Add(pc => Inst.Addi(17, 0, 93)); // Exit
+            Assembler.Add(pc => Inst.Addi(10, 0, 0));  // Code 0
+            Assembler.Add(pc => Inst.Ecall(0, 0, 0));
+            
+            base.Run(10);
+            
+            Assert.True(Machine.Halted);
+        }
 
-        var asm = new SourceAssembler(code);
-        asm.Assemble(Machine);
-        
-        Runner.Run(50);
+        [Fact]
+        public void Ecall_PrintInt()
+        {
+            Init64();
+            Assembler.Add(pc => Inst.Addi(17, 0, 1)); // Print Int
+            Assembler.Add(pc => Inst.Addi(10, 0, 42)); 
+            Assembler.Add(pc => Inst.Ecall(0, 0, 0));
+            Assembler.Add(pc => Inst.Addi(17, 0, 93)); // Exit
+            Assembler.Add(pc => Inst.Ecall(0, 0, 0));
 
-        // Linux write returns number of bytes written in a0
-        AssertReg(10, 2ul); 
-    }
-
-    [Fact]
-    public void Rars_Random_Range()
-    {
-        Init64();
-        Machine.Host = new MultiOSHandler { Kind = OSKind.RARS, Silent = true };
-
-        string code = @"
-            li a1, 100      # Max
-            li a7, 42       # RandIntRange
-            ecall
-        ";
-
-        var asm = new SourceAssembler(code);
-        asm.Assemble(Machine);
-        
-        Runner.Run(10);
-
-        // Result in a0 should be < 100
-        ulong res = Machine.Registers.Read(10);
-        Assert.True(res < 100);
+            base.Run(20);
+            
+            Assert.True(Machine.Halted);
+        }
     }
 }

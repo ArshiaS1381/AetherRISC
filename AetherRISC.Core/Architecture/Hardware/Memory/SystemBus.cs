@@ -1,26 +1,24 @@
-using AetherRISC.Core.Abstractions.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.Core.Architecture.Hardware.Memory
 {
-    public class SystemBus : IMemoryBus
+    public unsafe class SystemBus : IMemoryBus
     {
-        // 4KB Pages
         private const int PageSize = 4096;
         private const int PageShift = 12;
         private const uint PageMask = 0xFFF;
 
-        // Sparse storage
         private readonly Dictionary<uint, byte[]> _pages = new();
         private readonly uint _size;
 
-        // --- Optimization: Last Page Cache ---
-        // Accessing the same page sequentially is the most common operation (fetching).
-        // Caching the last accessed array skips the Dictionary lookup.
-        private uint _lastPageKey = uint.MaxValue;
-        private byte[]? _lastPageCache = null;
+        private uint _key0 = uint.MaxValue;
+        private byte[]? _val0 = null;
+        
+        private uint _key1 = uint.MaxValue;
+        private byte[]? _val1 = null;
 
         public SystemBus(uint size)
         {
@@ -32,28 +30,30 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory
         {
             uint pfn = address >> PageShift;
 
-            // 1. Fast Path: Hit the cache
-            if (pfn == _lastPageKey && _lastPageCache != null) 
-                return _lastPageCache;
+            if (pfn == _key0) return _val0;
 
-            // 2. Slow Path: Dictionary Lookup
+            if (pfn == _key1) 
+            {
+                var tmpK = _key0; var tmpV = _val0;
+                _key0 = _key1;    _val0 = _val1;
+                _key1 = tmpK;     _val1 = tmpV;
+                return _val0;
+            }
+
             if (_pages.TryGetValue(pfn, out var page)) 
             {
-                // Update Cache
-                _lastPageKey = pfn;
-                _lastPageCache = page;
+                _key1 = _key0; _val1 = _val0;
+                _key0 = pfn;   _val0 = page;
                 return page;
             }
             
             if (!create) return null;
 
-            // 3. Allocation
             page = new byte[PageSize];
             _pages[pfn] = page;
             
-            // Update Cache
-            _lastPageKey = pfn;
-            _lastPageCache = page;
+            _key1 = _key0; _val1 = _val0;
+            _key0 = pfn;   _val0 = page;
             
             return page;
         }
@@ -75,26 +75,22 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ushort ReadHalf(uint address)
         {
-            // Fast Path: Aligned within a single page
             if ((address & PageMask) <= PageSize - 2)
             {
                 var page = GetPage(address, false);
                 if (page == null) return 0;
-                uint offset = address & PageMask;
-                return (ushort)(page[offset] | (page[offset + 1] << 8));
+                fixed (byte* ptr = &page![address & PageMask]) { return *(ushort*)ptr; }
             }
-            // Slow Path: Crossing Page Boundary
             return (ushort)(ReadByte(address) | (ReadByte(address + 1) << 8));
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void WriteHalf(uint address, ushort value)
         {
             if ((address & PageMask) <= PageSize - 2)
             {
                 var page = GetPage(address, true);
-                uint offset = address & PageMask;
-                page![offset] = (byte)(value & 0xFF);
-                page[offset + 1] = (byte)((value >> 8) & 0xFF);
+                fixed (byte* ptr = &page![address & PageMask]) { *(ushort*)ptr = value; }
             }
             else
             {
@@ -110,22 +106,18 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory
             {
                 var page = GetPage(address, false);
                 if (page == null) return 0;
-                uint offset = address & PageMask;
-                return (uint)(page[offset] | (page[offset + 1] << 8) | (page[offset + 2] << 16) | (page[offset + 3] << 24));
+                fixed (byte* ptr = &page![address & PageMask]) { return *(uint*)ptr; }
             }
             return (uint)(ReadByte(address) | (ReadByte(address + 1) << 8) | (ReadByte(address + 2) << 16) | (ReadByte(address + 3) << 24));
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void WriteWord(uint address, uint value)
         {
             if ((address & PageMask) <= PageSize - 4)
             {
                 var page = GetPage(address, true);
-                uint offset = address & PageMask;
-                page![offset] = (byte)(value & 0xFF);
-                page[offset + 1] = (byte)((value >> 8) & 0xFF);
-                page[offset + 2] = (byte)((value >> 16) & 0xFF);
-                page[offset + 3] = (byte)((value >> 24) & 0xFF);
+                fixed (byte* ptr = &page![address & PageMask]) { *(uint*)ptr = value; }
             }
             else
             {
@@ -136,37 +128,27 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ulong ReadDouble(uint address)
         {
             if ((address & PageMask) <= PageSize - 8)
             {
                 var page = GetPage(address, false);
                 if (page == null) return 0;
-                uint offset = address & PageMask;
-                uint lo = (uint)(page[offset] | (page[offset + 1] << 8) | (page[offset + 2] << 16) | (page[offset + 3] << 24));
-                uint hi = (uint)(page[offset + 4] | (page[offset + 5] << 8) | (page[offset + 6] << 16) | (page[offset + 7] << 24));
-                return (ulong)lo | ((ulong)hi << 32);
+                fixed (byte* ptr = &page![address & PageMask]) { return *(ulong*)ptr; }
             }
-            
             uint w0 = ReadWord(address);
             uint w1 = ReadWord(address + 4);
             return (ulong)w0 | ((ulong)w1 << 32);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void WriteDouble(uint address, ulong value)
         {
             if ((address & PageMask) <= PageSize - 8)
             {
                 var page = GetPage(address, true);
-                uint offset = address & PageMask;
-                page![offset] = (byte)value;
-                page[offset + 1] = (byte)(value >> 8);
-                page[offset + 2] = (byte)(value >> 16);
-                page[offset + 3] = (byte)(value >> 24);
-                page[offset + 4] = (byte)(value >> 32);
-                page[offset + 5] = (byte)(value >> 40);
-                page[offset + 6] = (byte)(value >> 48);
-                page[offset + 7] = (byte)(value >> 56);
+                fixed (byte* ptr = &page![address & PageMask]) { *(ulong*)ptr = value; }
             }
             else
             {

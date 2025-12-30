@@ -1,90 +1,76 @@
 using System;
-using System.Linq;
-using System.Reflection;
 using System.Collections.Generic;
 using AetherRISC.Core.Abstractions.Interfaces;
 using AetherRISC.Core.Architecture.Hardware.ISA;
+using AetherRISC.Core.Architecture.Hardware.Pipeline;
 
-using AetherRISC.Core.Assembler;
-
-namespace AetherRISC.Core.Architecture.Hardware.ISA.Decoding;
-
-public partial class InstructionDecoder
+namespace AetherRISC.Core.Architecture.Hardware.ISA.Decoding
 {
-    private readonly List<DecoderEntry> _factories = new();
-    private record DecoderEntry(uint Op, uint? F3, uint? F7, Func<uint, IInstruction?> Factory);
-
-    public InstructionDecoder() : this(InstructionSet.All) { }
-
-    public InstructionDecoder(InstructionSet enabledSets)
+    public class DecodedCacheEntry
     {
-        RegisterGeneratedOpcodes(enabledSets);
+        public IInstruction Inst;
+        public int Rd, Rs1, Rs2, Imm;
+        public bool IsLoad, IsStore, IsBranch, IsJump, IsFloatRegWrite, RegWrite;
+
+        public DecodedCacheEntry(IInstruction inst)
+        {
+            Inst = inst;
+            Rd = inst?.Rd ?? 0;
+            Rs1 = inst?.Rs1 ?? 0;
+            Rs2 = inst?.Rs2 ?? 0;
+            Imm = inst?.Imm ?? 0;
+            IsLoad = inst?.IsLoad ?? false;
+            IsStore = inst?.IsStore ?? false;
+            IsBranch = inst?.IsBranch ?? false;
+            IsJump = inst?.IsJump ?? false;
+            IsFloatRegWrite = inst?.IsFloatRegWrite ?? false;
+            RegWrite = (Rd != 0 || IsFloatRegWrite) && !IsStore && !IsBranch;
+        }
     }
 
-    partial void RegisterGeneratedOpcodes(InstructionSet enabledSets);
-
-    private void RegisterOpcode(uint op, Func<uint, IInstruction?> factory) =>
-        _factories.Add(new DecoderEntry(op, null, null, factory));
-
-    public IInstruction? Decode(uint raw)
+    public partial class InstructionDecoder
     {
-        uint opcode = raw & 0x7F;
+        private static readonly Dictionary<uint, DecodedCacheEntry> _fastCache = new();
+        private static readonly DecodedCacheEntry _sentinel;
+        private readonly InstructionSet _enabledSets;
+        private readonly ArchitectureSettings? _settings;
 
-        foreach (var entry in _factories)
-        {
-            if (entry.Op != opcode) continue;
-            var result = entry.Factory(raw);
-            if (result != null) return result;
+        static InstructionDecoder() 
+        { 
+            // Fix CS8625 by passing a dummy object or using null!
+            _sentinel = new DecodedCacheEntry(null!); 
         }
 
-        return DecodeReflection(raw, opcode);
-    }
-
-    private IInstruction? DecodeReflection(uint raw, uint opcode)
-    {
-        uint funct3 = (raw >> 12) & 0x7;
-        uint funct7 = (raw >> 25) & 0x7F;
-
-        var assembly = Assembly.GetExecutingAssembly();
-        foreach (var type in assembly.GetTypes())
+        public InstructionDecoder(InstructionSet enabledSets = InstructionSet.All, ArchitectureSettings? settings = null)
         {
-            if (!typeof(IInstruction).IsAssignableFrom(type) || type.IsAbstract) continue;
+            _enabledSets = enabledSets;
+            _settings = settings;
+        }
 
-            var attr = type.GetCustomAttribute<RiscvInstructionAttribute>();
-            if (attr == null || attr.Opcode != opcode) continue;
+        public InstructionDecoder() : this(InstructionSet.All, null) { }
 
-            bool f3Match = attr.Type is RiscvEncodingType.U or RiscvEncodingType.J || attr.Funct3 == funct3;
-            bool f7Match = attr.Type is not (RiscvEncodingType.R or RiscvEncodingType.ZbbUnary) || attr.Funct7 == funct7;
+        private partial IInstruction? DecodeGenerated(uint raw, InstructionSet enabledSets);
 
-            if (attr.Type == RiscvEncodingType.ZbbUnary)
+        public DecodedCacheEntry? DecodeFast(uint raw)
+        {
+            if (raw == 0) return null;
+            if (_fastCache.TryGetValue(raw, out var cached)) return ReferenceEquals(cached, _sentinel) ? null : cached;
+            IInstruction? inst = PerformFullDecode(raw);
+            var entry = (inst == null) ? _sentinel : new DecodedCacheEntry(inst);
+            _fastCache[raw] = entry;
+            return (inst == null) ? null : entry;
+        }
+        
+        public IInstruction? Decode(uint raw) => DecodeFast(raw)?.Inst;
+
+        private IInstruction? PerformFullDecode(uint raw)
+        {
+            var inst = DecodeGenerated(raw, _enabledSets) ?? DecodeManual(raw);
+            if (inst != null && _settings != null)
             {
-                uint rs2 = (raw >> 20) & 0x1F;
-                if (rs2 != attr.Rs2Sel) continue;
+                if (_settings.DisabledInstructions.Contains(inst.Mnemonic)) return null;
             }
-
-            if (f3Match && f7Match)
-                return Instantiate(type, raw, attr.Type);
+            return inst;
         }
-        return null;
-    }
-
-    private static IInstruction Instantiate(Type t, uint raw, RiscvEncodingType encoding)
-    {
-        int rd = (int)((raw >> 7) & 0x1F);
-        int rs1 = (int)((raw >> 15) & 0x1F);
-        int rs2 = (int)((raw >> 20) & 0x1F);
-
-        return encoding switch
-        {
-            RiscvEncodingType.R => (IInstruction)Activator.CreateInstance(t, rd, rs1, rs2)!,
-            RiscvEncodingType.I => (IInstruction)Activator.CreateInstance(t, rd, rs1, BitUtils.ExtractITypeImm(raw))!,
-            RiscvEncodingType.S => (IInstruction)Activator.CreateInstance(t, rs1, rs2, BitUtils.ExtractSTypeImm(raw))!,
-            RiscvEncodingType.B => (IInstruction)Activator.CreateInstance(t, rs1, rs2, BitUtils.ExtractBTypeImm(raw))!,
-            RiscvEncodingType.U => (IInstruction)Activator.CreateInstance(t, rd, BitUtils.ExtractUTypeImm(raw))!,
-            RiscvEncodingType.J => (IInstruction)Activator.CreateInstance(t, rd, BitUtils.ExtractJTypeImm(raw))!,
-            RiscvEncodingType.ShiftImm => (IInstruction)Activator.CreateInstance(t, rd, rs1, (int)(raw >> 20) & 0x3F)!,
-            RiscvEncodingType.ZbbUnary => (IInstruction)Activator.CreateInstance(t, rd, rs1, 0)!,
-            _ => (IInstruction)Activator.CreateInstance(t, rd, rs1, rs2)!
-        };
     }
 }

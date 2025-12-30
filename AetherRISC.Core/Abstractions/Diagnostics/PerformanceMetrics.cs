@@ -2,38 +2,31 @@ namespace AetherRISC.Core.Abstractions.Diagnostics
 {
     public class PerformanceMetrics
     {
-        // --- Throughput ---
-        public long TotalCycles { get; set; }
-        public long InstructionsRetired { get; set; }
+        // Pipeline-level commits (Instructions that flowed through WB)
+        public ulong InstructionsRetired { get; set; }
         
-        // IPC: Higher is better (Target: 1.0)
-        public double IPC => TotalCycles == 0 ? 0 : (double)InstructionsRetired / TotalCycles;
+        // ISA-level instructions (Effective instructions executed, e.g. a Fused op counts as 2)
+        public ulong IsaInstructionsRetired { get; set; }
+
+        public ulong TotalCycles { get; set; }
+        public ulong TotalBranches { get; set; }
+        public ulong BranchMisses { get; set; }
+        public ulong BranchHits { get; set; }
+        public ulong ControlHazardFlushes { get; set; }
+        public ulong DataHazardStalls { get; set; }
+        public int PipelineWidth { get; set; }
+
+        // Pipeline Throughput (Commits per cycle)
+        public double PipelineIPC => TotalCycles == 0 ? 0 : (double)InstructionsRetired / TotalCycles;
         
-        // CPI: Lower is better (Target: 1.0)
-        public double CPI => InstructionsRetired == 0 ? 0 : (double)TotalCycles / InstructionsRetired;
+        // Effective Throughput (ISA work per cycle - usually higher if fusion is on)
+        public double EffectiveIPC => TotalCycles == 0 ? 0 : (double)IsaInstructionsRetired / TotalCycles;
 
-        // --- Branch Prediction ---
-        public long TotalBranches { get; set; }
-        public long BranchHits { get; set; }
-        public long BranchMisses { get; set; }
-        public long TotalJumps { get; set; }
-
-        public double BranchAccuracy => TotalBranches == 0 ? 0 : (double)BranchHits / TotalBranches * 100.0;
-        public double MispredictionRate => TotalBranches == 0 ? 0 : (double)BranchMisses / TotalBranches * 100.0;
-
-        // --- Pipeline Health ---
-        public long ControlHazardFlushes { get; set; }
-        public long DataHazardStalls { get; set; }
-
-        // Efficiency: What % of cycles were NOT wasted?
-        public double PipelineEfficiency 
-        {
-            get 
-            {
-                if (TotalCycles == 0) return 0;
-                long wasted = ControlHazardFlushes + DataHazardStalls;
-                return 100.0 * (1.0 - ((double)wasted / TotalCycles));
-            }
-        }
+        public double BranchAccuracy => TotalBranches == 0 ? 100.0 : (double)BranchHits / TotalBranches * 100.0;
+        
+        // Fix CS0034: Explicitly cast PipelineWidth to ulong to resolve ambiguity
+        public double SlotUtilization => (TotalCycles * (ulong)PipelineWidth) == 0 
+            ? 0 
+            : (double)InstructionsRetired / (double)(TotalCycles * (ulong)PipelineWidth) * 100.0;
     }
 }

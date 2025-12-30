@@ -1,7 +1,7 @@
 using System;
-using AetherRISC.Core.Abstractions.Interfaces;
 using AetherRISC.Core.Architecture.Simulation.State;
 using AetherRISC.Core.Architecture.Hardware.Pipeline;
+using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
 {
@@ -16,51 +16,97 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
 
         public void Run(PipelineBuffers buffers)
         {
-            if (buffers.ExecuteMemory.IsEmpty)
+            if (!buffers.MemoryWriteback.IsStalled)
             {
-                buffers.MemoryWriteback.IsEmpty = true;
-                return;
+                buffers.MemoryWriteback.Flush();
             }
 
-            // Safety check for uninitialized memory
-            if (_state.Memory == null)
-                throw new InvalidOperationException("Memory subsystem not initialized");
-
-            var input = buffers.ExecuteMemory;
-            var output = buffers.MemoryWriteback;
-
-            output.DecodedInst = input.DecodedInst;
-            output.RawInstruction = input.RawInstruction;
-            output.PC = input.PC;
-            output.Rd = input.Rd;
-            output.RegWrite = input.RegWrite;
-
-            ulong result = input.AluResult;
-            uint addr = (uint)input.AluResult;
-
-            if (input.MemRead && input.DecodedInst != null)
-            {
-                var name = input.DecodedInst.GetType().Name.ToUpper().Replace("INSTRUCTION", "");
-
-                if (name == "LB")       result = (ulong)(long)(sbyte)_state.Memory.ReadByte(addr);
-                else if (name == "LBU") result = (ulong)_state.Memory.ReadByte(addr);
-                else if (name == "LH")  result = (ulong)(long)(short)_state.Memory.ReadHalf(addr);
-                else if (name == "LHU") result = (ulong)_state.Memory.ReadHalf(addr);
-                else if (name == "LW")  result = (ulong)(long)(int)_state.Memory.ReadWord(addr);
-                else if (name == "LWU") result = (ulong)_state.Memory.ReadWord(addr);
-                else result = (ulong)_state.Memory.ReadWord(addr); 
-            }
-            else if (input.MemWrite && input.DecodedInst != null)
-            {
-                var name = input.DecodedInst.GetType().Name.ToUpper().Replace("INSTRUCTION", "");
-
-                if (name == "SB")      _state.Memory.WriteByte(addr, (byte)input.StoreValue);
-                else if (name == "SH") _state.Memory.WriteHalf(addr, (ushort)input.StoreValue);
-                else _state.Memory.WriteWord(addr, (uint)input.StoreValue);
-            }
+            if (buffers.ExecuteMemory.IsEmpty) return;
             
-            output.FinalResult = result;
-            output.IsEmpty = false;
+            // Check for memory once. If null, we can't do anything useful.
+            IMemoryBus? mem = _state.Memory;
+            if (mem == null) return;
+
+            buffers.MemoryWriteback.SetHasContent();
+
+            var inputs = buffers.ExecuteMemory.Slots;
+            var outputs = buffers.MemoryWriteback.Slots;
+            int width = buffers.Width;
+
+            for (int i = 0; i < width; i++)
+            {
+                var input = inputs[i];
+                var output = outputs[i];
+
+                if (!input.Valid || input.IsBubble) { output.Reset(); continue; }
+
+                output.Valid = true;
+                output.DecodedInst = input.DecodedInst;
+                output.RawInstruction = input.RawInstruction;
+                output.PC = input.PC;
+                output.Rd = input.Rd;
+                output.RegWrite = input.RegWrite;
+                output.IsFloatRegWrite = input.IsFloatRegWrite;
+
+                ulong result = input.AluResult;
+                uint addr = (uint)input.AluResult;
+                
+                uint raw = input.RawInstruction;
+                uint opcode = raw & 0x7F;
+                uint funct3 = (raw >> 12) & 0x7;
+
+                if (input.MemRead)
+                {
+                    if (opcode == 0x03) 
+                    {
+                        switch (funct3)
+                        {
+                            case 0: byte b = mem.ReadByte(addr); result = (ulong)(long)(sbyte)b; break;
+                            case 1: ushort h = mem.ReadHalf(addr); result = (ulong)(long)(short)h; break;
+                            case 2: uint w = mem.ReadWord(addr); result = (ulong)(long)(int)w; break;
+                            case 3: result = mem.ReadDouble(addr); break;
+                            case 4: result = (ulong)mem.ReadByte(addr); break;
+                            case 5: result = (ulong)mem.ReadHalf(addr); break;
+                            case 6: result = (ulong)mem.ReadWord(addr); break;
+                        }
+                    }
+                    else if (opcode == 0x07)
+                    {
+                         if (funct3 == 2) {
+                             uint w = mem.ReadWord(addr);
+                             result = 0xFFFFFFFF00000000 | (ulong)w; 
+                         }
+                         else if (funct3 == 3) result = mem.ReadDouble(addr);
+                    }
+                }
+                
+                if (input.MemWrite)
+                {
+                    if (opcode == 0x23)
+                    {
+                        switch (funct3)
+                        {
+                            case 0: mem.WriteByte(addr, (byte)input.StoreValue); break; 
+                            case 1: mem.WriteHalf(addr, (ushort)input.StoreValue); break; 
+                            case 2: mem.WriteWord(addr, (uint)input.StoreValue); break; 
+                            case 3: mem.WriteDouble(addr, input.StoreValue); break; 
+                        }
+                    }
+                    else if (opcode == 0x27)
+                    {
+                        if (funct3 == 2) mem.WriteWord(addr, (uint)input.StoreValue); 
+                        else if (funct3 == 3) mem.WriteDouble(addr, input.StoreValue); 
+                    }
+                }
+                
+                if (!input.MemRead)
+                {
+                     if (opcode == 0x2F) result = input.FinalResult;
+                     else result = input.AluResult;
+                }
+
+                output.FinalResult = result;
+            }
         }
     }
 }

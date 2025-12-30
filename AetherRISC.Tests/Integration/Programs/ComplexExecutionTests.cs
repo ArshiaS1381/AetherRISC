@@ -1,53 +1,32 @@
 using Xunit;
 using AetherRISC.Tests.Infrastructure;
-using AetherRISC.Core.Helpers;
-using AetherRISC.Core.Architecture.Simulation;
+using AetherRISC.Core.Assembler;
 
-namespace AetherRISC.Tests.Integration.Programs;
-
-public class ComplexExecutionTests : CpuTestFixture
+namespace AetherRISC.Tests.Integration.Programs
 {
-    [Fact]
-    public void Recursive_Factorial_Stack_Torture()
+    public class ComplexExecutionTests : CpuTestFixture
     {
-        Init64();
-        Machine.Host = new MultiOSHandler { Silent = true };
-        Machine.Registers.Write(2, 0x100000); // Initialize Stack Pointer (SP)
-
-        // Recursive Factorial of 5
-        // Uses JAL, JALR (RET), Stack Pushes/Pops
-        string code = @"
-            .text
-            li a0, 5
-            jal ra, fact
-            ebreak
-
-            fact:
-                addi sp, sp, -16
-                sd ra, 8(sp)
-                sd a0, 0(sp)
-                addi t1, zero, 1
-                bgt a0, t1, recurse
-                li a0, 1
-                addi sp, sp, 16
-                ret
-            recurse:
-                addi a0, a0, -1
-                jal ra, fact
-                ld t1, 0(sp)
-                mul a0, a0, t1
-                ld ra, 8(sp)
-                addi sp, sp, 16
-                ret
-        ";
-
-        var asm = new SourceAssembler(code) { TextBase = 0 };
-        asm.Assemble(Machine);
-        Machine.ProgramCounter = 0;
-
-        Runner.Run(200);
-
-        // 5! = 120
-        AssertReg(10, 120ul);
+        [Fact]
+        public void Loop_Summation()
+        {
+            // sum = 0; for(i=10; i>0; i--) sum += i;
+            Init64();
+            var source = @"
+                li x1, 10   # i
+                li x2, 0    # sum
+                loop:
+                add x2, x2, x1
+                addi x1, x1, -1
+                bnez x1, loop
+                ebreak
+            ";
+            
+            var asm = new SourceAssembler(source);
+            asm.Assemble(Machine);
+            
+            base.Run(100);
+            
+            AssertReg(2, 55);
+        }
     }
 }

@@ -1,31 +1,50 @@
 using AetherRISC.Core.Architecture.Hardware.Pipeline;
 
-namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards;
-
-public class ControlHazardUnit : IHazardUnit
+namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
 {
-    public bool DetectAndHandle(PipelineBuffers buffers)
+    public class ControlHazardUnit : IHazardUnit
     {
-        // Only check valid buffers
-        if (!buffers.ExecuteMemory.IsEmpty)
+        public bool DetectAndHandle(PipelineBuffers buffers)
         {
-            // NEW LOGIC: Only flush if we MISPREDICTED.
-            // If we predicted correctly, we keep streaming (Seamless!)
-            
-            if (buffers.ExecuteMemory.Misprediction)
+            if (buffers.ExecuteMemory.IsEmpty) return false;
+
+            bool flushNeeded = false;
+            int branchSlotIndex = -1;
+
+            // 1. Scan for mispredictions
+            for(int i=0; i<buffers.ExecuteMemory.Slots.Length; i++)
             {
-                // 1. Flush younger stages (Decode and Fetch are processing wrong path instructions)
-                buffers.DecodeExecute.Flush();
+                var slot = buffers.ExecuteMemory.Slots[i];
+                if (slot.Valid && slot.Misprediction)
+                {
+                    flushNeeded = true;
+                    branchSlotIndex = i;
+                    // Note: ExecuteStage already repaired global PC
+                    break; 
+                }
+            }
+
+            if (flushNeeded)
+            {
+                // [FIX] Kill Shadow Instructions in the SAME Execute bundle
+                // If Branch is at Slot 0, Slots 1,2,3 are on the wrong path and must die.
+                for (int i = branchSlotIndex + 1; i < buffers.ExecuteMemory.Slots.Length; i++)
+                {
+                    buffers.ExecuteMemory.Slots[i].Reset();
+                }
+
+                // 2. Kill Fetch and Decode (Younger stages)
                 buffers.FetchDecode.Flush();
+                buffers.DecodeExecute.Flush();
                 
-                // 2. We do NOT need to reset PC here, because ExecuteStage already
-                // corrected the _state.Registers.PC to the "CorrectTarget".
-                // The next Fetch cycle will pick up from the correct location.
+                // IMPORTANT: Reset stalls to allow fetch from new PC immediately
+                buffers.FetchDecode.IsStalled = false;
+                buffers.DecodeExecute.IsStalled = false;
                 
                 return true;
             }
-        }
 
-        return false;
+            return false;
+        }
     }
 }

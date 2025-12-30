@@ -3,51 +3,60 @@ using AetherRISC.Core.Architecture.Simulation.State;
 using AetherRISC.Core.Architecture.Simulation.Runners;
 using AetherRISC.Core.Architecture.Hardware.ISA.Encoding;
 using AetherRISC.Core.Assembler;
-using AetherRISC.Core.Architecture.Hardware.ISA.Utils;
 using AetherRISC.Tests.Infrastructure;
 
-namespace AetherRISC.Tests.Infrastructure;
-
-public abstract class CpuTestFixture
+namespace AetherRISC.Tests.Infrastructure
 {
-    // "null!" tells the compiler: "Trust me, I will initialize this before use."
-    protected MachineState Machine = null!;
-    protected SimpleRunner Runner = null!;
-    protected TestAssembler Assembler = null!;
-    protected TestMemoryBus Memory = null!;
-
-    protected void Init64() => Init(64);
-    protected void Init32() => Init(32);
-
-    private void Init(int xlen)
+    public abstract class CpuTestFixture
     {
-        var config = new SystemConfig(xlen, resetVector: 0x0000);
-        Machine = new MachineState(config);
+        public MachineState Machine { get; set; } = null!;
+        public TestMemoryBus Memory { get; set; } = null!;
+        public TestAssembler Assembler { get; set; } = null!;
         
-        Memory = new TestMemoryBus(1024 * 1024); 
-        Machine.Memory = Memory;
+        protected object Runner { get; set; } = null!;
 
-        Assembler = new TestAssembler();
-        Runner = new SimpleRunner(Machine, new NullLogger());
-    }
+        protected void Init64() => Init(64);
+        protected void Init32() => Init(32);
 
-    protected void Run(int cycles)
-    {
-        var insts = Assembler.Assemble();
-        uint addr = (uint)Machine.Config.ResetVector;
-
-        foreach (var inst in insts)
+        protected virtual void Init(int xlen)
         {
-            uint raw = InstructionEncoder.Encode(inst);
-            Memory.WriteWord(addr, raw);
-            addr += 4;
+            var config = new SystemConfig(xlen, resetVector: 0x0000);
+            Machine = new MachineState(config);
+            
+            Memory = new TestMemoryBus(1024 * 1024); 
+            Machine.Memory = Memory;
+
+            Assembler = new TestAssembler();
+            Runner = new SimpleRunner(Machine, new Core.Helpers.NullLogger());
         }
 
-        Machine.ProgramCounter = Machine.Config.ResetVector;
-        Runner.Run(cycles);
-    }
+        // Made public for integration tests
+        public void Run(int cycles)
+        {
+            LoadToMemory();
+            
+            if (Runner is SimpleRunner s) s.Run(cycles);
+            else if (Runner is PipelinedRunner p) 
+            {
+                for(int i=0; i<cycles; i++) p.Step(i);
+            }
+        }
+        
+        private void LoadToMemory()
+        {
+            var insts = Assembler.Assemble();
+            uint addr = (uint)Machine.Config.ResetVector;
+            foreach (var inst in insts)
+            {
+                uint raw = InstructionEncoder.Encode(inst);
+                Memory.WriteWord(addr, raw);
+                addr += 4;
+            }
+            Machine.Registers.PC = Machine.Config.ResetVector;
+        }
 
-    protected void AssertReg(int regIndex, ulong expected) => Assert.Equal(expected, Machine.Registers.Read(regIndex));
-    protected void AssertReg(int regIndex, long expected) => Assert.Equal((ulong)expected, Machine.Registers.Read(regIndex));
-    protected void AssertPC(ulong expected) => Assert.Equal(expected, Machine.ProgramCounter);
+        protected void AssertReg(int regIndex, ulong expected) => Assert.Equal(expected, Machine.Registers.Read(regIndex));
+        protected void AssertReg(int regIndex, long expected) => Assert.Equal((ulong)expected, Machine.Registers.Read(regIndex));
+        protected void AssertPC(ulong expected) => Assert.Equal(expected, Machine.Registers.PC);
+    }
 }

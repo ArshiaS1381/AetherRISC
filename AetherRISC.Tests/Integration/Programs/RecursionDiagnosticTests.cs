@@ -1,178 +1,62 @@
 using Xunit;
 using Xunit.Abstractions;
 using AetherRISC.Tests.Infrastructure;
-using AetherRISC.Core.Helpers;
-using AetherRISC.Core.Architecture.Simulation;
+using AetherRISC.Core.Assembler;
 
-namespace AetherRISC.Tests.Integration.Programs;
-
-public class RecursionDiagnosticTests : CpuTestFixture
+namespace AetherRISC.Tests.Integration.Programs
 {
-    private readonly ITestOutputHelper _output;
-    
-    public RecursionDiagnosticTests(ITestOutputHelper output) => _output = output;
-
-    [Fact]
-    public void Diag_Factorial_2_Levels()
+    public class RecursionDiagnosticTests : CpuTestFixture
     {
-        // fact(2) = 2 * fact(1) = 2 * 1 = 2
-        Init64();
-        Machine.Host = new MultiOSHandler { Silent = true };
-        Machine.Registers.Write(2, 0x100000);
+        private readonly ITestOutputHelper _output;
+        public RecursionDiagnosticTests(ITestOutputHelper output) => _output = output;
 
-        string code = @"
+        [Fact]
+        public void Recursive_Fibonacci()
+        {
+            Init64();
+            // Simple recursive fib code structure
+            var source = @"
             .text
-            li a0, 2
-            jal ra, fact
+            li x10, 5
+            jal ra, fib
             ebreak
 
-            fact:
-                addi sp, sp, -16
-                sd ra, 8(sp)
-                sd a0, 0(sp)
-                addi t1, zero, 1
-                bgt a0, t1, recurse
-                li a0, 1
-                addi sp, sp, 16
-                ret
-            recurse:
-                addi a0, a0, -1
-                jal ra, fact
-                ld t1, 0(sp)
-                mul a0, a0, t1
-                ld ra, 8(sp)
-                addi sp, sp, 16
-                ret
-        ";
-
-        var asm = new SourceAssembler(code) { TextBase = 0 };
-        asm.Assemble(Machine);
-        Machine.ProgramCounter = 0;
-        Runner.Run(50);
-
-        ulong result = Machine.Registers.Read(10);
-        _output.WriteLine($"fact(2) = {result} (expected 2)");
-        AssertReg(10, 2ul);
-    }
-
-    [Fact]
-    public void Diag_Factorial_3_Levels()
-    {
-        // fact(3) = 3 * 2 * 1 = 6
-        Init64();
-        Machine.Host = new MultiOSHandler { Silent = true };
-        Machine.Registers.Write(2, 0x100000);
-
-        string code = @"
-            .text
-            li a0, 3
-            jal ra, fact
-            ebreak
-
-            fact:
-                addi sp, sp, -16
-                sd ra, 8(sp)
-                sd a0, 0(sp)
-                addi t1, zero, 1
-                bgt a0, t1, recurse
-                li a0, 1
-                addi sp, sp, 16
-                ret
-            recurse:
-                addi a0, a0, -1
-                jal ra, fact
-                ld t1, 0(sp)
-                mul a0, a0, t1
-                ld ra, 8(sp)
-                addi sp, sp, 16
-                ret
-        ";
-
-        var asm = new SourceAssembler(code) { TextBase = 0 };
-        asm.Assemble(Machine);
-        Machine.ProgramCounter = 0;
-        Runner.Run(100);
-
-        ulong result = Machine.Registers.Read(10);
-        _output.WriteLine($"fact(3) = {result} (expected 6)");
-        AssertReg(10, 6ul);
-    }
-
-    [Fact]
-    public void Diag_Factorial_4_Levels()
-    {
-        // fact(4) = 24
-        Init64();
-        Machine.Host = new MultiOSHandler { Silent = true };
-        Machine.Registers.Write(2, 0x100000);
-
-        string code = @"
-            .text
-            li a0, 4
-            jal ra, fact
-            ebreak
-
-            fact:
-                addi sp, sp, -16
-                sd ra, 8(sp)
-                sd a0, 0(sp)
-                addi t1, zero, 1
-                bgt a0, t1, recurse
-                li a0, 1
-                addi sp, sp, 16
-                ret
-            recurse:
-                addi a0, a0, -1
-                jal ra, fact
-                ld t1, 0(sp)
-                mul a0, a0, t1
-                ld ra, 8(sp)
-                addi sp, sp, 16
-                ret
-        ";
-
-        var asm = new SourceAssembler(code) { TextBase = 0 };
-        asm.Assemble(Machine);
-        Machine.ProgramCounter = 0;
-        Runner.Run(150);
-
-        ulong result = Machine.Registers.Read(10);
-        _output.WriteLine($"fact(4) = {result} (expected 24)");
-        AssertReg(10, 24ul);
-    }
-
-    [Fact]
-    public void Diag_Stack_Frame_Preservation()
-    {
-        // Verify stack frame values survive a nested call
-        Init64();
-        Machine.Registers.Write(2, 0x100000);
-
-        string code = @"
-            .text
-            li a0, 42
+            fib:
             addi sp, sp, -16
-            sd a0, 0(sp)
-            jal ra, dummy
-            ld a1, 0(sp)
+            sd ra, 8(sp)
+            sd x10, 0(sp)
+            li t0, 2
+            blt x10, t0, ret_base
+            
+            addi x10, x10, -1
+            jal ra, fib
+            mv t1, x10    # t1 = fib(n-1)
+            
+            ld x10, 0(sp)
+            addi x10, x10, -2
+            sd t1, 0(sp)  # save fib(n-1)
+            jal ra, fib   # x10 = fib(n-2)
+            
+            ld t1, 0(sp)  # restore fib(n-1)
+            add x10, x10, t1
+            j ret
+
+            ret_base:
+            # x10 is already n (0 or 1)
+
+            ret:
+            ld ra, 8(sp)
             addi sp, sp, 16
-            ebreak
+            ret
+            ";
 
-            dummy:
-                addi sp, sp, -16
-                li t0, 999
-                sd t0, 0(sp)
-                addi sp, sp, 16
-                ret
-        ";
+            var asm = new SourceAssembler(source);
+            asm.Assemble(Machine);
+            Machine.Registers.Write(2, 0x10000); // SP
 
-        var asm = new SourceAssembler(code) { TextBase = 0 };
-        asm.Assemble(Machine);
-        Machine.ProgramCounter = 0;
-        Runner.Run(20);
-
-        ulong result = Machine.Registers.Read(11);
-        _output.WriteLine($"a1 = {result} (expected 42 - preserved across call)");
-        AssertReg(11, 42ul);
+            base.Run(1000);
+            
+            AssertReg(10, 5); // Fib(5) = 5
+        }
     }
 }

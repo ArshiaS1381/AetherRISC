@@ -46,56 +46,59 @@ namespace AetherRISC.Generators
             }
 
             var sb = new StringBuilder();
+            sb.AppendLine("#nullable enable");
             sb.AppendLine("using AetherRISC.Core.Architecture.Hardware.ISA;");
             sb.AppendLine("using AetherRISC.Core.Abstractions.Interfaces;");
-            // UPDATED: Point to the new Utils namespace
             sb.AppendLine("using AetherRISC.Core.Architecture.Hardware.ISA.Utils;"); 
             sb.AppendLine();
-            sb.AppendLine("namespace AetherRISC.Core.Architecture.Hardware.ISA.Decoding;");
-            sb.AppendLine();
-            sb.AppendLine("public partial class InstructionDecoder");
+            sb.AppendLine("namespace AetherRISC.Core.Architecture.Hardware.ISA.Decoding");
             sb.AppendLine("{");
-            sb.AppendLine("    partial void RegisterGeneratedOpcodes(InstructionSet enabledSets)");
+            sb.AppendLine("    public partial class InstructionDecoder");
             sb.AppendLine("    {");
+            sb.AppendLine("        private partial IInstruction? DecodeGenerated(uint raw, InstructionSet enabledSets)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            int f3 = (int)((raw >> 12) & 0x7);");
+            sb.AppendLine("            int f7 = (int)((raw >> 25) & 0x7F);");
+            sb.AppendLine("            int rd = (int)((raw >> 7) & 0x1F);");
+            sb.AppendLine("            int rs1 = (int)((raw >> 15) & 0x1F);");
+            sb.AppendLine("            int rs2 = (int)((raw >> 20) & 0x1F);");
+            sb.AppendLine("            int rs3 = (int)((raw >> 27) & 0x1F);"); 
+            sb.AppendLine("            int immI = (int)raw >> 20;"); 
+            sb.AppendLine();
+            sb.AppendLine("            switch (raw & 0x7F)");
+            sb.AppendLine("            {");
 
             foreach (var group in insts.GroupBy(x => x.Opcode))
             {
-                sb.AppendLine($"        // Opcode {group.Key}");
-                sb.AppendLine($"        RegisterOpcode({group.Key}, raw => {{");
-                sb.AppendLine("            int f3 = (int)((raw >> 12) & 0x7);");
-                sb.AppendLine("            int f7 = (int)((raw >> 25) & 0x7F);");
-                sb.AppendLine("            int rd = (int)((raw >> 7) & 0x1F);");
-                sb.AppendLine("            int rs1 = (int)((raw >> 15) & 0x1F);");
-                sb.AppendLine("            int rs2 = (int)((raw >> 20) & 0x1F);");
-                sb.AppendLine("            int immI = (int)raw >> 20;"); 
-
+                sb.AppendLine($"                case {group.Key}:");
                 foreach (var inst in group)
                 {
                     var archFlag = $"(InstructionSet){inst.Arch}";
-                    sb.AppendLine($"            if (enabledSets.HasFlag({archFlag}))");
-                    sb.AppendLine("            {");
+                    sb.AppendLine($"                    if (enabledSets.HasFlag({archFlag}))");
+                    sb.AppendLine("                    {");
 
                     var checks = BuildChecks(inst);
                     var (immCode, args) = GetArgsForType(inst.Type);
 
                     if (!string.IsNullOrEmpty(immCode))
                     {
-                        sb.AppendLine($"                {{");
-                        sb.AppendLine($"                    {immCode}");
-                        sb.AppendLine($"                    if ({checks}) return new {inst.FullName}({args});");
-                        sb.AppendLine($"                }}");
+                        sb.AppendLine($"                        {{");
+                        sb.AppendLine($"                            {immCode}");
+                        sb.AppendLine($"                            if ({checks}) return new {inst.FullName}({args});");
+                        sb.AppendLine($"                        }}");
                     }
                     else
                     {
-                        sb.AppendLine($"                if ({checks}) return new {inst.FullName}({args});");
+                        sb.AppendLine($"                        if ({checks}) return new {inst.FullName}({args});");
                     }
-                    sb.AppendLine("            }");
+                    sb.AppendLine("                    }");
                 }
-
-                sb.AppendLine("            return null;");
-                sb.AppendLine("        });");
+                sb.AppendLine("                    break;");
             }
 
+            sb.AppendLine("            }");
+            sb.AppendLine("            return null;");
+            sb.AppendLine("        }");
             sb.AppendLine("    }");
             sb.AppendLine("}");
 
@@ -106,7 +109,7 @@ namespace AetherRISC.Generators
         {
             var checks = new List<string>();
             if (inst.Funct3 != null) checks.Add($"f3 == {inst.Funct3}");
-            if (inst.Funct7 != null) checks.Add($"f7 == {inst.Funct7}");
+            if (inst.Funct7 != null && inst.Type != 6) checks.Add($"f7 == {inst.Funct7}"); 
             if (inst.Type == 7 && inst.Funct6 != null) checks.Add($"((raw >> 26) & 0x3F) == {inst.Funct6}");
             if (inst.Type == 8 && inst.Rs2Sel != null) checks.Add($"rs2 == {inst.Rs2Sel}");
             
@@ -120,14 +123,15 @@ namespace AetherRISC.Generators
         {
             return type switch
             {
-                0 => ("", "rd, rs1, rs2"), // R
-                1 => ("int imm = BitUtils.ExtractITypeImm(raw);", "rd, rs1, imm"), // I
-                2 => ("int imm = BitUtils.ExtractSTypeImm(raw);", "rs1, rs2, imm"), // S
-                3 => ("int imm = BitUtils.ExtractBTypeImm(raw);", "rs1, rs2, imm"), // B
-                4 => ("int imm = BitUtils.ExtractUTypeImm(raw);", "rd, imm"), // U
-                5 => ("int imm = BitUtils.ExtractJTypeImm(raw);", "rd, imm"), // J
-                7 => ("int imm = BitUtils.ExtractShamt(raw, 64);", "rd, rs1, imm"), // ShiftImm
-                8 => ("", "rd, rs1, 0"), // ZbbUnary
+                0 => ("", "rd, rs1, rs2"), 
+                1 => ("int imm = BitUtils.ExtractITypeImm(raw);", "rd, rs1, imm"), 
+                2 => ("int imm = BitUtils.ExtractSTypeImm(raw);", "rs1, rs2, imm"), 
+                3 => ("int imm = BitUtils.ExtractBTypeImm(raw);", "rs1, rs2, imm"), 
+                4 => ("int imm = BitUtils.ExtractUTypeImm(raw);", "rd, imm"), 
+                5 => ("int imm = BitUtils.ExtractJTypeImm(raw);", "rd, imm"), 
+                6 => ("", "rd, rs1, rs2, rs3"),
+                7 => ("int imm = BitUtils.ExtractShamt(raw, 64);", "rd, rs1, imm"), 
+                8 => ("", "rd, rs1, 0"), 
                 _ => ("", "rd, rs1, rs2")
             };
         }
@@ -138,21 +142,7 @@ namespace AetherRISC.Generators
             return kvp.Key == name ? kvp.Value.Value?.ToString() : null;
         }
 
-        private class InstInfo
-        {
-            public string FullName = "", Mnemonic = "", Opcode = "";
-            public string? Funct3, Funct7, Funct6, Rs2Sel;
-            public int Arch, Type;
-        }
-
-        private class SyntaxReceiver : ISyntaxReceiver
-        {
-            public List<ClassDeclarationSyntax> CandidateClasses { get; } = new();
-            public void OnVisitSyntaxNode(SyntaxNode s)
-            {
-                if (s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0)
-                    CandidateClasses.Add(c);
-            }
-        }
+        private class InstInfo { public string FullName="", Mnemonic="", Opcode=""; public string? Funct3, Funct7, Funct6, Rs2Sel; public int Arch, Type; }
+        private class SyntaxReceiver : ISyntaxReceiver { public List<ClassDeclarationSyntax> CandidateClasses { get; } = new(); public void OnVisitSyntaxNode(SyntaxNode s) { if (s is ClassDeclarationSyntax c && c.AttributeLists.Count > 0) CandidateClasses.Add(c); } }
     }
 }

@@ -64,7 +64,7 @@ namespace AetherRISC.CLI
             var state = new MachineState(sysConfig);
             state.Memory = new SystemBus(Config.MemorySize);
             
-            var outBuffer = new StringWriter();
+            var outBuffer = new RingBufferWriter(100); 
             var host = new MultiOSHandler { Kind = OSKind.RARS, Silent = false, Output = outBuffer };
             state.Host = host;
 
@@ -82,28 +82,47 @@ namespace AetherRISC.CLI
                 fileLogger.Initialize(Path.GetFileName(filePath));
                 logger = fileLogger;
             }
-            else
-            {
-                logger = new NullLogger();
-            }
+            else { logger = new NullLogger(); }
 
             var session = new SimulationSession
             {
+                ProgramName = Path.GetFileName(filePath), // Set Name
                 State = state,
                 Logger = logger,
                 OutputBuffer = outBuffer
             };
 
+            var archSettings = new ArchitectureSettings
+            {
+                EnableEarlyBranchResolution = Config.EnableEarlyBranchResolution,
+                BranchPredictorInitialValue = Config.PredictorInitValue,
+                PipelineWidth = Config.PipelineWidth,
+                AllowDynamicBranchFetching = Config.AllowDynamicBranchFetching,
+                AllowCascadedExecution = Config.AllowCascadedExecution,
+                EnableReturnAddressStack = Config.EnableReturnAddressStack,
+                EnableMacroOpFusion = Config.EnableMacroOpFusion,
+                FetchBufferRatio = Config.FetchBufferRatio,
+                DisabledInstructions = Config.DisabledInstructions
+            };
+
             if (Config.ExecutionMode.Equals("pipeline", StringComparison.OrdinalIgnoreCase))
             {
-                // MAP CONFIG TO SETTINGS
-                var archSettings = new ArchitectureSettings
-                {
-                    EnableEarlyBranchResolution = Config.EnableEarlyBranchResolution,
-                    BranchPredictorInitialValue = Config.PredictorInitValue
-                };
-
                 session.PipelinedRunner = new PipelinedRunner(state, logger, Config.BranchPredictor, archSettings);
+                
+                if (Config.EnableTandemVerification)
+                {
+                    var shadowState = new MachineState(sysConfig);
+                    shadowState.Memory = new SystemBus(Config.MemorySize); 
+                    var shadowBuffer = new RingBufferWriter(100);
+                    shadowState.Host = new MultiOSHandler { Kind = OSKind.RARS, Silent = false, Output = shadowBuffer };
+
+                    var shadowAsm = new SourceAssembler(sourceCode) { TextBase = 0 };
+                    shadowAsm.Assemble(shadowState);
+                    
+                    session.ShadowRunner = new SimpleRunner(shadowState, new NullLogger());
+                    session.ShadowState = shadowState;
+                    session.ShadowOutputBuffer = shadowBuffer;
+                }
             }
             else
             {

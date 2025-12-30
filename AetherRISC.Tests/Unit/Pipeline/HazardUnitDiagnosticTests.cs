@@ -2,8 +2,7 @@ using Xunit;
 using Xunit.Abstractions;
 using AetherRISC.Core.Architecture.Hardware.Pipeline;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards;
-using AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I; // For AddInstruction
-using AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I; // For LwInstruction (via IType)
+using AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I; 
 
 namespace AetherRISC.Tests.Unit.Pipeline;
 
@@ -15,70 +14,50 @@ public class HazardUnitDiagnosticTests
     [Fact]
     public void StructuralUnit_Must_Stall_When_Load_Is_In_Memory_Stage()
     {
-        // SETUP
-        var buffers = new PipelineBuffers();
+        var buffers = new PipelineBuffers(1);
         var structUnit = new StructuralHazardUnit();
 
-        // 1. Put a LOAD instruction in the Memory Stage (ExecuteMemory buffer)
-        // Represents: LW x1, 0(x10) moving from Ex to Mem
-        buffers.ExecuteMemory.IsEmpty = false;
-        buffers.ExecuteMemory.MemRead = true; // IT IS A LOAD
-        buffers.ExecuteMemory.Rd = 1;         // Destination is x1
+        // 1. Load in Memory Stage
+        buffers.ExecuteMemory.SetHasContent();
+        var memOp = buffers.ExecuteMemory.Slots[0];
+        memOp.Valid = true;
+        memOp.MemRead = true;
+        memOp.Rd = 1;
 
-        // 2. Put a CONSUMER in the Decode Stage (FetchDecode buffer)
-        // Represents: ADD x2, x1, x0 (Depends on x1)
-        buffers.FetchDecode.IsValid = true;
-        buffers.FetchDecode.IsEmpty = false;
-        // Encode: ADD x2, x1, x0 -> opcode 0x33, rd=2, rs1=1, rs2=0
-        // Bin: 0000000 00000 00001 000 00010 0110011
-        buffers.FetchDecode.Instruction = 0x00008133; 
+        // 2. Consumer in Decode Stage (ADD x2, x1, x0)
+        buffers.FetchDecode.SetHasContent();
+        var ifOp = buffers.FetchDecode.Slots[0];
+        ifOp.Valid = true;
+        ifOp.RawInstruction = 0x00008133; 
 
-        // ACT
         bool stallSignal = structUnit.DetectAndHandle(buffers);
 
-        // ASSERT
-        if (!stallSignal)
-        {
-            _output.WriteLine("FAILURE: StructuralHazardUnit did NOT stall.");
-            _output.WriteLine("Reason: It likely only checks the Execute stage, ignoring loads in the Memory stage.");
-        }
         Assert.True(stallSignal, "Pipeline MUST stall because x1 is being loaded from memory and is not ready.");
     }
 
     [Fact]
     public void DataUnit_Must_NOT_Forward_Address_From_Load()
     {
-        // SETUP
-        var buffers = new PipelineBuffers();
+        var buffers = new PipelineBuffers(1);
         var dataUnit = new DataHazardUnit();
 
-        // 1. Put a LOAD instruction in the Execute Stage
-        // Represents: LW x1, 0(x10)
-        // The AluResult contains the ADDRESS (e.g. 0x100), NOT the data (e.g. 5).
-        buffers.ExecuteMemory.IsEmpty = false;
-        buffers.ExecuteMemory.RegWrite = true;
-        buffers.ExecuteMemory.MemRead = true; // IT IS A LOAD
-        buffers.ExecuteMemory.Rd = 1;
-        buffers.ExecuteMemory.AluResult = 0xDEADBEEF; // The Address
+        // 1. Load in Execute Stage
+        buffers.ExecuteMemory.SetHasContent();
+        var exOp = buffers.ExecuteMemory.Slots[0];
+        exOp.Valid = true;
+        exOp.RegWrite = true;
+        exOp.MemRead = true;
+        exOp.Rd = 1;
+        exOp.AluResult = 0xDEADBEEF; // Address
 
-        // 2. Put a CONSUMER in the Decode Stage
-        // Represents: ADD x2, x1, x0
-        buffers.DecodeExecute.IsEmpty = false;
-        // Mock a decoded instruction
-        buffers.DecodeExecute.DecodedInst = new AddInstruction(2, 1, 0); 
+        // 2. Consumer in Decode
+        buffers.DecodeExecute.SetHasContent();
+        var decOp = buffers.DecodeExecute.Slots[0];
+        decOp.Valid = true;
+        decOp.DecodedInst = new AddInstruction(2, 1, 0); 
 
-        // ACT
         dataUnit.Resolve(buffers);
 
-        // ASSERT
-        // We expect ForwardedRs1 to be NULL. We cannot forward from a Load in Execute!
-        // If it forwards 0xDEADBEEF, the bug is present.
-        
-        if (buffers.DecodeExecute.ForwardedRs1 == 0xDEADBEEF)
-        {
-            _output.WriteLine("FAILURE: DataHazardUnit forwarded the Memory Address as Data!");
-        }
-
-        Assert.Null(buffers.DecodeExecute.ForwardedRs1);
+        Assert.Null(decOp.ForwardedRs1);
     }
 }

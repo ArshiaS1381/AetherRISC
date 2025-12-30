@@ -1,27 +1,40 @@
 using System;
-using System.Runtime.CompilerServices; // Required for Inlining
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace AetherRISC.Core.Architecture.Hardware.Registers
 {
-    public class RegisterFile
+    public unsafe class RegisterFile
     {
-        private readonly ulong[] _registers = new ulong[32];
+        // Unmanaged memory pointer for true zero-overhead access
+        private readonly ulong* _regs;
         
         public ulong PC { get; set; }
+
+        public RegisterFile()
+        {
+            // Allocate 32 * 8 bytes (256 bytes) unmanaged
+            _regs = (ulong*)NativeMemory.Alloc(32 * sizeof(ulong));
+            Reset();
+        }
+
+        ~RegisterFile()
+        {
+            NativeMemory.Free(_regs);
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ulong Read(int index)
         {
-            // x0 is always 0. The array entry is 0 initialized, 
-            // but the check prevents logic errors elsewhere.
-            if (index == 0) return 0;
-            return _registers[index];
+            // 0x1F mask ensures safety and handles 0-31 wrapping
+            return _regs[index & 0x1F];
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Write(int index, ulong value)
         {
-            if (index != 0) _registers[index] = value;
+            if (index == 0) return;
+            _regs[index & 0x1F] = value;
         }
 
         public ulong this[int index]
@@ -34,7 +47,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Registers
 
         public void Reset()
         {
-            Array.Clear(_registers, 0, _registers.Length);
+            NativeMemory.Clear(_regs, 32 * sizeof(ulong));
             PC = 0;
         }
     }

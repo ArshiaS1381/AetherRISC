@@ -46,7 +46,6 @@ namespace AetherRISC.SuperScalarTests
         {
             // This tests the logic inside DataHazardUnit without running a full CPU.
             var unit = new DataHazardUnit();
-            var buffers = new PipelineBuffers(1); // Single issue for simplicity
 
             // 1. Setup Execute Stage with a LOAD to x5
             var exSlot = buffers.ExecuteMemory.Slots[0];

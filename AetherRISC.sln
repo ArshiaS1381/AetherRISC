@@ -5,19 +5,7 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.Core", "AetherRISC.Core\AetherRISC.Core.csproj", "{3EE4D13C-F4A4-417A-B391-837A21C408DA}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.UI", "AetherRISC.UI\AetherRISC.UI.csproj", "{AD38FA29-4099-40C5-9210-3C93B177BF1E}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.Desktop", "AetherRISC.Desktop\AetherRISC.Desktop.csproj", "{1BE394CB-18BA-499C-96CA-656A9688938F}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "AetherRISC.Web", "AetherRISC.Web", "{28BB8B33-012E-E6B0-7ACB-8F06CBACB66A}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.Web", "AetherRISC.Web\AetherRISC.Web\AetherRISC.Web.csproj", "{DE36045B-8A4E-4C43-9BBF-4C5F8150EE2F}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.Web.Client", "AetherRISC.Web\AetherRISC.Web.Client\AetherRISC.Web.Client.csproj", "{34AF035E-1ACD-47A2-ABCD-29DDFD10BC53}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.CLI", "AetherRISC.CLI\AetherRISC.CLI.csproj", "{D0BD5874-310A-441D-80B8-EDF6294FE738}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AetherRISC.SuperScalarTests", "AetherRISC.SuperScalarTests\AetherRISC.SuperScalarTests.csproj", "{5A6C5E9A-D568-41F0-AB5A-E6B270B5AA4D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -130,7 +118,5 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{DE36045B-8A4E-4C43-9BBF-4C5F8150EE2F} = {28BB8B33-012E-E6B0-7ACB-8F06CBACB66A}
-		{34AF035E-1ACD-47A2-ABCD-29DDFD10BC53} = {28BB8B33-012E-E6B0-7ACB-8F06CBACB66A}
 	EndGlobalSection
 EndGlobal

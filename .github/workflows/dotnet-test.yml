@@ -27,9 +27,6 @@ jobs:
     - name: Build
       run: dotnet build --no-restore -r win-x64
 
-    - name: Install MAUI Workloads
-      run: dotnet workload install maui-maccatalyst
-
     - name: Test
       # This command finds all test projects in the solution and runs them
       run: dotnet test AetherRISC.sln --no-build --verbosity normal --configuration Release

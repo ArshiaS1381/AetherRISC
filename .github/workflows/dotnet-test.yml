@@ -8,8 +8,6 @@ on:
 
 jobs:
   build:
-    # Use 'windows-latest' since I see a 'Desktop' folder which implies UI libraries.
-    # If your tests are purely logic and cross-platform, you can use 'ubuntu-latest'.
     runs-on: windows-latest
 
     steps:
@@ -18,15 +16,15 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        # REPLACE this with the version you are using (e.g., 6.0.x, 7.0.x, 8.0.x)
-        dotnet-version: 8.0.x 
+        dotnet-version: 9.0.x # Updated to 9.0 based on your SDK path in the screenshot
 
-    - name: Restore Dependencies
-      run: dotnet restore -r win-x64
+    - name: Restore dependencies
+      run: dotnet restore AetherRISC.sln
 
     - name: Build
-      run: dotnet build --no-restore -r win-x64
+      # REMOVED: -r win-x64
+      # CHANGED: We just use standard Release configuration
+      run: dotnet build AetherRISC.sln --no-restore --configuration Release
 
     - name: Test
-      # This command finds all test projects in the solution and runs them
       run: dotnet test AetherRISC.sln --no-build --verbosity normal --configuration Release

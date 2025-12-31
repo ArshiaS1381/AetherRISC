@@ -52,14 +52,13 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
                 if (stall) break;
 
                 // 2. Load-Use Hazard
-                // If instruction in Execute (exMemSlots - waiting for Memory) is a Load,
-                // and it writes to a register we need, we must stall.
-                // Forwarding cannot help here as data comes from memory stage end.
+                // Check against instructions currently in Execute (outputs going to Memory)
                 for(int j = 0; j < width; j++)
                 {
                     var exOp = exMemSlots[j];
                     if(exOp.Valid && !exOp.IsBubble && exOp.MemRead && exOp.Rd != 0)
                     {
+                        // If load target matches our sources
                         if(exOp.Rd == rs1 || exOp.Rd == rs2) 
                         { 
                             stall = true;
@@ -72,8 +71,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
 
             if (stall)
             {
-                // CRITICAL FIX: Do NOT Flush. Stalling means holding the data.
-                // We freeze Fetch and Decode buffers. Execute stage will see the stall and bubble itself.
+                // Freeze Fetch and Decode
                 buffers.FetchDecode.IsStalled = true;
                 buffers.DecodeExecute.IsStalled = true;
                 return true;

@@ -19,7 +19,7 @@ namespace AetherRISC.VectorCacheMemoryTests
             cfg.L1D.Replacement = ReplacementPolicy.LRU;
 
             var metrics = new PerformanceMetrics();
-            var ram = new PhysicalRam(0, 4096);
+            var ram = new PhysicalRam(0, 16384); 
             var bus = new CachedMemoryBus(ram, cfg, metrics);
 
             bus.WriteWord(0x1000, 0xAAAA); 
@@ -45,7 +45,7 @@ namespace AetherRISC.VectorCacheMemoryTests
             cfg.L1D.Associativity = 2;
             cfg.L1D.Replacement = ReplacementPolicy.Random;
 
-            var ram = new PhysicalRam(0, 4096);
+            var ram = new PhysicalRam(0, 16384);
             int evictA = 0;
             int evictB = 0;
             

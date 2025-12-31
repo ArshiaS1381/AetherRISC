@@ -28,35 +28,28 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
             {
                 if (openRow == rowId)
                 {
-                    // Row Hit
                     latency = _config.CAS; 
-                    if (_config.PagePolicy == DramPagePolicy.ClosePage) 
-                        _openRows.Remove(bankId);
+                    if (_config.PagePolicy == DramPagePolicy.ClosePage) _openRows.Remove(bankId);
                 }
                 else
                 {
-                    // Row Conflict: Precharge + Activate + CAS
+                    // Conflict
                     latency = _config.RP + _config.RCD + _config.CAS;
-                    
-                    if (_config.PagePolicy == DramPagePolicy.OpenPage)
-                        _openRows[bankId] = rowId;
-                    else
-                        _openRows.Remove(bankId); // Close immediately after acccess
+                    if (_config.PagePolicy == DramPagePolicy.OpenPage) _openRows[bankId] = rowId;
+                    else _openRows.Remove(bankId);
                 }
             }
             else
             {
-                // Row Closed: Activate + CAS
+                // Closed
                 latency = _config.RCD + _config.CAS;
-                
-                if (_config.PagePolicy == DramPagePolicy.OpenPage)
-                    _openRows[bankId] = rowId;
-                else
-                    _openRows.Remove(bankId); // Ensure it stays closed
+                if (_config.PagePolicy == DramPagePolicy.OpenPage) _openRows[bankId] = rowId;
+                else _openRows.Remove(bankId);
             }
 
+            // Burst
             int bytesPerBurst = (_config.BusWidthBits / 8) * _config.BurstLength; 
-            int burstsNeeded = (int)Math.Ceiling((double)transferSizeBytes / bytesPerBurst);
+            int burstsNeeded = (int)Math.Ceiling((double)transferSizeBytes / (double)Math.Max(1, bytesPerBurst));
             latency += burstsNeeded * (_config.BurstLength / 2); 
 
             return latency;

@@ -2,16 +2,52 @@ using System.Collections.Generic;
 
 namespace AetherRISC.Core.Architecture
 {
+    public enum ReplacementPolicy { Random, LRU }
+    public enum WritePolicy { WriteBack, WriteThrough }
+    public enum AllocationPolicy { WriteAllocate, NoWriteAllocate }
+
+    public class CacheConfiguration
+    {
+        public bool Enabled { get; set; } = true;
+        public int SizeBytes { get; set; }
+        public int Associativity { get; set; }
+        public int LineSizeBytes { get; set; }
+        public int LatencyCycles { get; set; }
+        
+        // Granular Tuning
+        public ReplacementPolicy Replacement { get; set; } = ReplacementPolicy.LRU;
+        public WritePolicy Write { get; set; } = WritePolicy.WriteBack;
+        public AllocationPolicy Allocation { get; set; } = AllocationPolicy.WriteAllocate;
+
+        public CacheConfiguration(int size, int ways, int lineSize, int latency)
+        {
+            SizeBytes = size;
+            Associativity = ways;
+            LineSizeBytes = lineSize;
+            LatencyCycles = latency;
+        }
+
+        public CacheConfiguration() {}
+
+        /// <summary>
+        /// Helper to configure size based on geometry.
+        /// </summary>
+        public void ConfigureGeometry(int lines, int wordsPerLine, int wordSizeBytes = 4)
+        {
+            LineSizeBytes = wordsPerLine * wordSizeBytes;
+            SizeBytes = lines * LineSizeBytes;
+        }
+    }
+
     public class ArchitectureSettings
     {
-        // Global Architecture
         public int XLEN { get; set; } = 64;
 
         // --- Pipeline Configuration ---
         public int PipelineWidth { get; set; } = 2;
         public double FetchBufferRatio { get; set; } = 2.0; 
         
-        // --- Functional Unit Constraints ---
+        // --- Functional Unit Constraints (0 = Infinite) ---
         public int MaxIntALUs { get; set; } = 2;
         public int MaxFloatALUs { get; set; } = 1;
         public int MaxMemoryUnits { get; set; } = 1;
@@ -32,37 +68,25 @@ namespace AetherRISC.Core.Architecture
         // --- Branch Prediction ---
         public string BranchPredictorType { get; set; } = "gshare"; 
         public bool StaticPredictTaken { get; set; } = false;
+        
+        // Bimodal
         public int BimodalTableSizeBits { get; set; } = 12;
         public int BimodalCounterBits { get; set; } = 2;
-        public int BimodalInitialValue { get; set; } = 1;
+        public int BimodalInitialValue { get; set; } = 1; // Fixed: Added missing property
+        
+        // GShare
         public int GShareHistoryBits { get; set; } = 12;
         public int GShareTableBits { get; set; } = 14;
 
-        // --- Memory Hierarchy (Cache Simulation) ---
+        // --- Memory Hierarchy ---
         public bool EnableCacheSimulation { get; set; } = false;
-        
-        // L1 Cache
-        public int L1ICacheSize { get; set; } = 32 * 1024;
-        public int L1ICacheWays { get; set; } = 4;
-        public int L1ICacheLineSize { get; set; } = 64; // Added
-        public int L1ICacheLatency { get; set; } = 1;
+        public uint MmioStartAddress { get; set; } = 0xF0000000; 
 
-        public int L1DCacheSize { get; set; } = 32 * 1024;
-        public int L1DCacheWays { get; set; } = 4;
-        public int L1DCacheLineSize { get; set; } = 64; // Added
-        public int L1DCacheLatency { get; set; } = 2;
-
-        // L2 Cache
-        public bool EnableL2Cache { get; set; } = false;
-        public int L2CacheSize { get; set; } = 256 * 1024; 
-        public int L2CacheWays { get; set; } = 8;
-        public int L2CacheLatency { get; set; } = 10;
-
-        // L3 Cache
-        public bool EnableL3Cache { get; set; } = false;
-        public int L3CacheSize { get; set; } = 2 * 1024 * 1024;
-        public int L3CacheWays { get; set; } = 16;
-        public int L3CacheLatency { get; set; } = 30;
+        // Detailed Cache Configs (Tunable per level)
+        public CacheConfiguration L1I { get; set; } = new(32 * 1024, 4, 64, 1);
+        public CacheConfiguration L1D { get; set; } = new(32 * 1024, 4, 64, 2);
+        public CacheConfiguration L2 { get; set; } = new(256 * 1024, 8, 64, 10) { Enabled = false };
+        public CacheConfiguration L3 { get; set; } = new(2 * 1024 * 1024, 16, 64, 30) { Enabled = false };
 
         // Main Memory
         public int DramLatencyCycles { get; set; } = 100;

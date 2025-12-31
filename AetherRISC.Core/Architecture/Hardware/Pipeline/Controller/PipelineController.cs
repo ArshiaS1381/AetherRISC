@@ -4,7 +4,6 @@ using AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors;
 using AetherRISC.Core.Architecture.Hardware.Pipeline.Stages;
 using AetherRISC.Core.Architecture.Simulation.State;
-using AetherRISC.Core.Architecture.Hardware.Memory; // For IMemoryBus
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
 {
@@ -36,25 +35,21 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
             // Re-attach memory to inject the Metrics into the CachedMemoryBus
             if(state.Memory != null && state.Memory is not AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy.CachedMemoryBus)
             {
-                // This is a bit of a hack to re-wrap physical RAM if it was already set simple
-                // Ideally, MachineState setup happens before Controller
                 state.AttachMemory(state.Memory, Metrics);
             }
             else if (state.Memory != null && settings.EnableCacheSimulation)
             {
-                // If the memory bus is generic but cache sim enabled, re-wrap it using our metrics
-                // This assumes state.Memory is the underlying RAM
                 state.AttachMemory(state.Memory, Metrics);
             }
             
             _fetch = new FetchStage(state, settings);
             _decode = new DecodeStage(state, settings);
-            _execute = new ExecuteStage(state, settings);
+            _execute = new ExecuteStage(state, settings); // ExecuteStage no longer handles resource counting
             _memory = new MemoryStage(state);
             _writeback = new WritebackStage(state);
             
             _dataHazard = new DataHazardUnit { StateContext = state, Settings = settings };
-            _structHazard = new StructuralHazardUnit();
+            _structHazard = new StructuralHazardUnit(settings); // New constructor
             _controlHazard = new ControlHazardUnit();
         }
 
@@ -64,11 +59,16 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
             Buffers.ResetStalls();
 
             _dataHazard.Resolve(Buffers);
-            _structHazard.DetectAndHandle(Buffers);
+            if (_structHazard.DetectAndHandle(Buffers)) 
+            {
+                // Optionally track structural stalls in metrics here
+            }
+
             if (Buffers.FetchDecode.IsStalled) Metrics.DataHazardStalls++;
 
             _writeback.Run(Buffers);
             
+            // Retirement
             for(int i=0; i<Buffers.Width; i++) 
             {
                 var slot = Buffers.MemoryWriteback.Slots[i];

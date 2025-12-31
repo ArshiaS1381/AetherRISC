@@ -6,7 +6,6 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors
     {
         public static IBranchPredictor Create(ArchitectureSettings settings)
         {
-            // Fallback default
             if (settings == null) settings = new ArchitectureSettings();
 
             return settings.BranchPredictorType.ToLowerInvariant() switch
@@ -22,7 +21,13 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors
                     settings.GShareHistoryBits, 
                     settings.GShareTableBits),
                 
-                _ => new TunableStaticPredictor(false) 
+                "tournament" => new TournamentPredictor(
+                    settings.BimodalTableSizeBits,
+                    settings.GShareTableBits,
+                    10 // Meta table bits hardcoded or add to settings
+                ),
+                
+                _ => new TunableGSharePredictor(12, 14) 
             };
         }
     }

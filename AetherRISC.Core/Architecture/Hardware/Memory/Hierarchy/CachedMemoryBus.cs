@@ -1,8 +1,6 @@
 using AetherRISC.Core.Abstractions.Diagnostics;
 using AetherRISC.Core.Abstractions.Interfaces;
 using AetherRISC.Core.Architecture;
-using AetherRISC.Core.Architecture.Hardware.Memory;
-using System.Runtime.CompilerServices;
 
 namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
 {
@@ -12,7 +10,6 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
         private readonly ArchitectureSettings _settings;
         private readonly PerformanceMetrics _metrics;
 
-        // Controllers
         private readonly CacheController _l1I;
         private readonly CacheController _l1D;
         private readonly CacheController? _l2;
@@ -24,85 +21,90 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
             _settings = settings;
             _metrics = metrics;
 
-            // Init L1
-            _l1I = new CacheController("L1I", settings.L1ICacheSize, settings.L1ICacheWays, settings.L1ICacheLineSize, settings.L1ICacheLatency);
-            _l1D = new CacheController("L1D", settings.L1DCacheSize, settings.L1DCacheWays, settings.L1DCacheLineSize, settings.L1DCacheLatency);
+            // Pass specific sub-configs
+            _l1I = new CacheController("L1I", settings.L1I);
+            _l1D = new CacheController("L1D", settings.L1D);
 
-            // Init Optional L2
-            if (settings.EnableL2Cache)
-                _l2 = new CacheController("L2", settings.L2CacheSize, settings.L2CacheWays, 64, settings.L2CacheLatency);
+            if (settings.L2.Enabled)
+                _l2 = new CacheController("L2", settings.L2);
             
-            // Init Optional L3
-            if (settings.EnableL3Cache)
-                _l3 = new CacheController("L3", settings.L3CacheSize, settings.L3CacheWays, 64, settings.L3CacheLatency);
+            if (settings.L3.Enabled)
+                _l3 = new CacheController("L3", settings.L3);
         }
 
-        // --- IMemoryBus Passthrough ---
-        public byte ReadByte(uint address) => _phys.ReadByte(address);
-        public void WriteByte(uint address, byte value) => _phys.WriteByte(address, value);
-        public ushort ReadHalf(uint address) => _phys.ReadHalf(address);
-        public void WriteHalf(uint address, ushort value) => _phys.WriteHalf(address, value);
-        public uint ReadWord(uint address) => _phys.ReadWord(address);
-        public void WriteWord(uint address, uint value) => _phys.WriteWord(address, value);
-        public ulong ReadDouble(uint address) => _phys.ReadDouble(address);
-        public void WriteDouble(uint address, ulong value) => _phys.WriteDouble(address, value);
+        public byte ReadByte(uint a) => _phys.ReadByte(a);
+        public void WriteByte(uint a, byte v) => _phys.WriteByte(a, v);
+        public ushort ReadHalf(uint a) => _phys.ReadHalf(a);
+        public void WriteHalf(uint a, ushort v) => _phys.WriteHalf(a, v);
+        public uint ReadWord(uint a) => _phys.ReadWord(a);
+        public void WriteWord(uint a, uint v) => _phys.WriteWord(a, v);
+        public ulong ReadDouble(uint a) => _phys.ReadDouble(a);
+        public void WriteDouble(uint a, ulong v) => _phys.WriteDouble(a, v);
 
-        // --- LATENCY SIMULATION ---
-        // This is called by MemoryStage and FetchStage to determine stall cycles
-        public int GetAccessLatency(uint address, bool isInstruction)
+        public int GetAccessLatency(uint address, bool isInstruction, bool isWrite)
         {
             if (!_settings.EnableCacheSimulation) return 0;
 
-            int totalLatency = 0;
-            bool eviction;
+            // MMIO Bypass
+            if (address >= _settings.MmioStartAddress) return _settings.DramLatencyCycles;
 
-            // 1. Check L1
+            int latency = 0;
+            bool wb;
+            
+            // --- L1 ---
             var l1 = isInstruction ? _l1I : _l1D;
-            var l1Metric = isInstruction ? _metrics.L1I : _metrics.L1D;
-            
+            var l1M = isInstruction ? _metrics.L1I : _metrics.L1D;
             l1.Tick();
-            totalLatency += l1.Latency;
-
-            if (l1.Access(address, false, out eviction) == CacheAccessResult.Hit)
-            {
-                l1Metric.Hits++;
-                return totalLatency;
-            }
+            latency += l1.Latency;
             
-            l1Metric.Misses++;
-            if(eviction) l1Metric.Evictions++;
+            var res = l1.Access(address, isWrite, out wb);
+            if (res == CacheAccessResult.Hit)
+            {
+                l1M.Hits++;
+                if (wb && _l2 != null) latency += _l2.Latency; 
+                else if (wb) latency += _settings.DramLatencyCycles;
+                return latency;
+            }
+            l1M.Misses++;
+            if(wb) l1M.Evictions++;
 
-            // 2. Check L2 (if enabled)
+            // --- L2 ---
             if (_l2 != null)
             {
                 _l2.Tick();
-                totalLatency += _l2.Latency;
-                if (_l2.Access(address, false, out eviction) == CacheAccessResult.Hit)
+                latency += _l2.Latency;
+                res = _l2.Access(address, isWrite, out wb); 
+                if (res == CacheAccessResult.Hit)
                 {
                     _metrics.L2.Hits++;
-                    return totalLatency;
+                    if (wb) latency += _l3?.Latency ?? _settings.DramLatencyCycles;
+                    return latency;
                 }
                 _metrics.L2.Misses++;
-                if(eviction) _metrics.L2.Evictions++;
+                if(wb) _metrics.L2.Evictions++;
             }
 
-            // 3. Check L3 (if enabled)
+            // --- L3 ---
             if (_l3 != null)
             {
                 _l3.Tick();
-                totalLatency += _l3.Latency;
-                if (_l3.Access(address, false, out eviction) == CacheAccessResult.Hit)
+                latency += _l3.Latency;
+                res = _l3.Access(address, isWrite, out wb);
+                if (res == CacheAccessResult.Hit)
                 {
                     _metrics.L3.Hits++;
-                    return totalLatency;
+                    if(wb) latency += _settings.DramLatencyCycles;
+                    return latency;
                 }
                 _metrics.L3.Misses++;
-                if(eviction) _metrics.L3.Evictions++;
+                if(wb) _metrics.L3.Evictions++;
             }
 
-            // 4. DRAM Access
-            totalLatency += _settings.DramLatencyCycles;
-            return totalLatency;
+            // --- DRAM ---
+            latency += _settings.DramLatencyCycles;
+            return latency;
         }
+        
+        public int GetAccessLatency(uint address, bool isInstruction) => GetAccessLatency(address, isInstruction, false);
     }
 }

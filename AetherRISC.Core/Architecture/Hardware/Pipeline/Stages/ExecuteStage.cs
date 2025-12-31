@@ -1,7 +1,6 @@
 using System;
 using AetherRISC.Core.Architecture.Simulation.State;
 using AetherRISC.Core.Architecture.Hardware.Pipeline;
-using AetherRISC.Core.Architecture.Hardware.ISA.Decoding;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
 {
@@ -19,69 +18,62 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
         public void Run(PipelineBuffers buffers)
         {
             if (!buffers.ExecuteMemory.IsStalled) 
-            {
                 buffers.ExecuteMemory.Flush();
-            }
 
             if (buffers.DecodeExecute.IsEmpty || buffers.DecodeExecute.IsStalled) return;
 
             buffers.ExecuteMemory.SetHasContent();
             
             bool recoveryTriggered = false;
+            bool stallDetected = false;
+            ulong stallPC = 0;
+            
+            // Resource Counters for this cycle (Simulation of functional units)
+            int usedIntALU = 0;
+            int usedFPU = 0;
+            int usedMem = 0;
+            int usedBranch = 0;
+
             var inputs = buffers.DecodeExecute.Slots;
             var outputs = buffers.ExecuteMemory.Slots;
             var memWbSlots = buffers.MemoryWriteback.Slots;
             int width = buffers.Width;
             var regs = _state.Registers;
 
-            // Resource Counters for this cycle
-            int usedIntALU = 0;
-            int usedFPU = 0;
-            int usedMem = 0;
-            int usedBranch = 0;
-            
-            bool stallDetected = false;
-            ulong stallPC = 0;
-
             for (int i = 0; i < width; i++)
             {
                 var input = inputs[i];
                 var output = outputs[i];
 
+                // If a previous instruction in this bundle stalled or triggered recovery,
+                // this instruction (and all subsequent) must become bubbles.
                 if (stallDetected || recoveryTriggered || !input.Valid || input.IsBubble)
                 {
                     output.Reset();
                     continue;
                 }
 
-                // --- RESOURCE CHECK START ---
-                bool hasResource = CheckResources(input, ref usedIntALU, ref usedFPU, ref usedMem, ref usedBranch);
-                if (!hasResource)
+                // --- RESOURCE CHECK (Structural Hazard) ---
+                if (!CheckResources(input, ref usedIntALU, ref usedFPU, ref usedMem, ref usedBranch))
                 {
-                    // Resource exhaustion.
-                    // Since this is in-order issue, we must stall THIS instruction and all newer ones.
-                    // We treat this like a hazard: Stall Fetch/Decode, Flush this slot.
+                    // IN-ORDER CONSTRAINT:
+                    // If we run out of ALUs for this instruction, we must stall THIS instruction
+                    // AND all subsequent instructions in the bundle.
                     stallDetected = true;
                     stallPC = input.PC;
                     
-                    // We must tell the upstream stage (Decode) that we did NOT consume this instruction.
-                    // However, 'DecodeStage' has already advanced. 
-                    // This requires a "Replay" mechanism similar to DataHazards.
-                    // For simplicity here, we simulate it by setting the Pipeline Stalls.
-                    
-                    // Reset this output (it becomes a bubble)
+                    // The instruction is not consumed. Logic below handles pipeline flush/rewind.
                     output.Reset();
                     continue; 
                 }
-                // --- RESOURCE CHECK END ---
 
+                // --- DATA FORWARDING ---
                 int rs1Idx = input.Rs1;
                 int rs2Idx = input.Rs2;
-
                 ulong rs1Val = regs.Read(rs1Idx);
                 ulong rs2Val = regs.Read(rs2Idx);
 
-                // Forwarding from WB stage
+                // Forward from WB (Youngest first)
                 for (int k = width - 1; k >= 0; k--)
                 {
                     var memOp = memWbSlots[k];
@@ -106,10 +98,12 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                     }
                 }
 
+                // ... (Load Reservation / Hazard Unit handles Load-Use stalls) ...
+
                 if (input.ForwardedRs1.HasValue) rs1Val = input.ForwardedRs1.Value;
                 if (input.ForwardedRs2.HasValue) rs2Val = input.ForwardedRs2.Value;
 
-                // Propagate to Output
+                // --- EXECUTION ---
                 output.Valid = true;
                 output.DecodedInst = input.DecodedInst;
                 output.RawInstruction = input.RawInstruction;
@@ -128,7 +122,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                 {
                     input.DecodedInst.Compute(_state, rs1Val, rs2Val, output);
 
-                    // Branch Resolution Logic
+                    // Branch / Prediction Resolution
                     if (input.DecodedInst.IsBranch || input.DecodedInst.IsJump)
                     {
                         ulong instLen = ((input.RawInstruction & 0x3) == 0x3) ? 4u : 2u;
@@ -137,21 +131,18 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                         bool actualTaken = output.BranchTaken;
                         ulong correctNextPC = actualTaken ? output.ActualTarget : fallthrough;
 
-                        bool predTaken = input.PredictedTaken;
-                        ulong predTarget = input.PredictedTarget;
-                        
-                        if ((predTaken != actualTaken) || (actualTaken && predTarget != correctNextPC))
+                        if ((input.PredictedTaken != actualTaken) || (actualTaken && input.PredictedTarget != correctNextPC))
                         {
                             output.Misprediction = true;
                             output.CorrectTarget = correctNextPC;
                             _state.Registers.PC = correctNextPC;
                             _state.ProgramCounter = correctNextPC;
-                            recoveryTriggered = true;
+                            recoveryTriggered = true; // Kills subsequent instructions in this loop
                         }
                     }
                     else if (input.PredictedTaken)
                     {
-                         // Was predicted taken, but is not a branch/jump instruction? (Spurious prediction)
+                         // Spurious prediction on non-branch
                          ulong instLen = ((input.RawInstruction & 0x3) == 0x3) ? 4u : 2u;
                          ulong fallthrough = input.PC + instLen;
                          output.Misprediction = true;
@@ -163,26 +154,31 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                 }
             }
 
+            // --- HANDLING STALLS ---
             if (stallDetected)
             {
-                // We couldn't issue the full bundle due to resources.
-                // We need to replay starting from the stalled PC.
+                // We ran out of execution ports.
+                // 1. Reset PC to the instruction that stalled.
                 _state.ProgramCounter = stallPC;
                 
-                // Flush upstream to force re-fetch/decode of the stalled instructions
+                // 2. Flush upstream buffers (Fetch/Decode) because they contain instructions
+                //    that we are now going to re-fetch from the stall point.
                 buffers.FetchDecode.Flush();
                 buffers.DecodeExecute.Flush();
                 
-                // Ensure Fetch isn't stalled so it can grab the "replay" PC immediately
+                // 3. Ensure Fetch isn't marked stalled (so it runs next cycle)
                 buffers.FetchDecode.IsStalled = false;
+                buffers.DecodeExecute.IsStalled = false;
+                
+                // Note: The valid instructions in outputs[0..stall_index-1] will proceed to Memory stage.
             }
         }
 
         private bool CheckResources(PipelineMicroOp op, ref int iALU, ref int fALU, ref int mem, ref int bru)
         {
-            if (op.DecodedInst == null) return true; // NOP usually consumes nothing or just iALU
+            if (op.DecodedInst == null) return true; // NOP
             
-            // 1. Memory
+            // Priority Check: Memory
             if ((op.MemRead || op.MemWrite) && _settings.MaxMemoryUnits > 0)
             {
                 if (mem >= _settings.MaxMemoryUnits) return false;
@@ -190,7 +186,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                 return true; 
             }
 
-            // 2. Branch
+            // Branch Unit
             if ((op.DecodedInst.IsBranch || op.DecodedInst.IsJump) && _settings.MaxBranchUnits > 0)
             {
                 if (bru >= _settings.MaxBranchUnits) return false;
@@ -198,10 +194,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                 return true;
             }
 
-            // 3. Float
-            // We need to check if the instruction is floating point. 
-            // Currently simplified check: IsFloatRegWrite is a strong hint, but some FP ops (FCLASS) write to Int.
-            // Ideally, add IsFloat property to IInstruction. Assuming IsFloatRegWrite covers most compute.
+            // Float Unit
             if (op.IsFloatRegWrite && _settings.MaxFloatALUs > 0)
             {
                 if (fALU >= _settings.MaxFloatALUs) return false;
@@ -209,7 +202,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                 return true;
             }
 
-            // 4. Integer (Default fallthrough)
+            // Integer Unit (Default)
             if (_settings.MaxIntALUs > 0)
             {
                 if (iALU >= _settings.MaxIntALUs) return false;

@@ -20,11 +20,12 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
         public PerformanceMetrics Metrics => _controller.Metrics;
         public IBranchPredictor Predictor => _controller.Predictor;
 
-        public PipelinedRunner(MachineState state, ISimulationLogger logger, string branchPredictor, ArchitectureSettings settings)
+        public PipelinedRunner(MachineState state, ISimulationLogger logger, ArchitectureSettings settings)
         {
             _state = state;
             _logger = logger;
-            _controller = new PipelineController(state, branchPredictor, settings ?? new ArchitectureSettings());
+            // FIXED: Removed the old "branchPredictor" string argument
+            _controller = new PipelineController(state, settings);
             _visDecoder = new InstructionDecoder();
         }
 
@@ -72,11 +73,9 @@ namespace AetherRISC.Core.Architecture.Simulation.Runners
                      var op = b.FetchDecode.Slots[i];
                      if(op.Valid) 
                      {
-                         // Use local decoder for visualization if needed
                          var inst = _visDecoder.Decode(op.RawInstruction);
                          string pred = op.PredictedTaken ? " [P:TAKEN]" : "";
                          
-                         // Fix: Handle null instruction safely
                          if (inst != null)
                             _logger.LogStageDecode(op.PC, op.RawInstruction, inst);
                          else 

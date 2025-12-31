@@ -25,84 +25,77 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
         {
             if (buffers.FetchDecode.IsStalled) return;
 
-            // Note: We flush the buffer. If Decode didn't consume everything, 
-            // DecodeStage logic must have reset the PC to the first unconsumed instruction.
             buffers.FetchDecode.Flush();
             buffers.FetchDecode.SetHasContent();
 
             ulong currentPC = _state.ProgramCounter;
-            var sysBus = _state.Memory as SystemBus;
-            
-            // Fetch up to the Physical Buffer Capacity (determined by Width * FetchRatio)
             int fetchCap = buffers.FetchDecode.Slots.Length;
+            int filled = 0;
 
-            for (int i = 0; i < fetchCap; i++)
+            // Block size determination
+            int blockSize = _settings.EnableBlockFetching ? _settings.FetchBlockSize : 4;
+            int bytesFetched = 0;
+
+            while (filled < fetchCap)
             {
-                var slot = buffers.FetchDecode.Slots[i];
-                
-                try 
+                // Enforce block boundary if block fetching is enabled
+                if (_settings.EnableBlockFetching && bytesFetched >= blockSize) break;
+
+                // Stop at memory boundary
+                if (currentPC > 0xFFFFFFF0) break;
+
+                try
                 {
-                    uint rawWord;
-                    if (sysBus != null) rawWord = sysBus.ReadWord((uint)currentPC);
-                    else rawWord = _state.Memory!.ReadWord((uint)currentPC);
+                    if (_state.Memory == null) break;
                     
-                    if (rawWord == 0 || rawWord == 0xFFFFFFFF) 
+                    ushort lower16 = _state.Memory.ReadHalf((uint)currentPC);
+                    bool isCompressed = InstructionDecompressor.IsCompressed(lower16);
+                    uint finalRaw;
+                    ulong instSize;
+
+                    if (isCompressed)
                     {
-                        slot.Reset();
-                        break; 
+                        finalRaw = InstructionDecompressor.Decompress(lower16);
+                        instSize = 2;
+                    }
+                    else
+                    {
+                        ushort upper16 = _state.Memory.ReadHalf((uint)(currentPC + 2));
+                        uint fullRaw = (uint)lower16 | ((uint)upper16 << 16);
+                        finalRaw = fullRaw;
+                        instSize = 4;
                     }
 
-                    ushort lower16 = (ushort)(rawWord & 0xFFFF);
-                    bool isCompressed = InstructionDecompressor.IsCompressed(lower16);
-                    uint finalRaw = isCompressed ? InstructionDecompressor.Decompress(lower16) : rawWord;
-                    ulong instSize = isCompressed ? 2u : 4u;
-
+                    var slot = buffers.FetchDecode.Slots[filled];
                     slot.Valid = true;
                     slot.IsBubble = false;
                     slot.PC = currentPC;
                     slot.RawInstruction = finalRaw;
 
-                    // Prediction Logic
-                    bool taken = false;
-                    ulong target = 0;
-                    uint opcode = finalRaw & 0x7F;
-                    uint rd = (finalRaw >> 7) & 0x1F;
-                    uint rs1 = (finalRaw >> 15) & 0x1F;
-                    
-                    bool isLink = (rd == 1 || rd == 5); 
-                    // Fix: opcode 0x67 is JALR.
-                    bool isJal = opcode == 0x6F;
-                    bool isJalr = opcode == 0x67;
-                    bool isRet = isJalr && rd == 0 && (rs1 == 1 || rs1 == 5); 
+                    // Prediction
+                    var prediction = PredictBranch(finalRaw, currentPC, instSize, predictor);
+                    slot.PredictedTaken = prediction.Taken;
+                    slot.PredictedTarget = prediction.Target;
 
-                    if (_settings.EnableReturnAddressStack && isRet)
-                    {
-                        taken = true; target = _ras.Pop();
-                    }
-                    else if (_settings.EnableReturnAddressStack && (isJal || isJalr) && isLink)
-                    {
-                        _ras.Push(currentPC + instSize);
-                        var pred = predictor.Predict(currentPC);
-                        taken = pred.PredictedTaken; target = pred.TargetAddress;
-                    }
-                    else
-                    {
-                        var pred = predictor.Predict(currentPC);
-                        taken = pred.PredictedTaken; target = pred.TargetAddress;
-                    }
+                    filled++;
+                    bytesFetched += (int)instSize;
 
-                    slot.PredictedTaken = taken;
-                    slot.PredictedTarget = target;
-
-                    if (taken)
+                    if (prediction.Taken)
                     {
-                        currentPC = target;
-                        // If we branch, we effectively break the sequential fetch block.
-                        // If AllowDynamicBranchFetching is ON, we effectively stop filling the buffer here
-                        // because we jumped to a new location.
-                        // If it is OFF, we definitely stop because we can't fetch non-contiguously in one cycle easily
-                        // without multi-ported I-Cache simulation.
-                        break;
+                        // Optimization: Dynamic Branch Fetching
+                        if (_settings.EnableDynamicBranchFetching)
+                        {
+                            currentPC = prediction.Target;
+                            // Breaking here simulates the pipeline bubble/redirect latency inherent in taken branches
+                            // even with dynamic fetching, we usually start a new block at the new address in the NEXT cycle
+                            // or immediate if hardware is complex. We break here to simplify (new PC is set).
+                            break; 
+                        }
+                        else
+                        {
+                            // Static Fetch behavior: Continue sequential fetch, Execute stage will detect mispredict/redirect later
+                            currentPC += instSize;
+                        }
                     }
                     else
                     {
@@ -111,12 +104,43 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Stages
                 }
                 catch
                 {
-                    slot.Reset();
                     break;
                 }
             }
 
             _state.ProgramCounter = currentPC;
+        }
+
+        private (bool Taken, ulong Target) PredictBranch(uint raw, ulong pc, ulong size, IBranchPredictor predictor)
+        {
+            uint opcode = raw & 0x7F;
+            
+            // JAL
+            if (opcode == 0x6F) 
+            {
+                int imm = (int)Hardware.ISA.Utils.BitUtils.ExtractJTypeImm(raw);
+                return (true, pc + (ulong)imm);
+            }
+
+            // Branches
+            if (opcode == 0x63)
+            {
+                var pred = predictor.Predict(pc);
+                return (pred.PredictedTaken, pred.TargetAddress);
+            }
+
+            // JALR (Ret/Call)
+            if (opcode == 0x67)
+            {
+                uint rd = (raw >> 7) & 0x1F;
+                uint rs1 = (raw >> 15) & 0x1F;
+                if (rd == 0 && (rs1 == 1 || rs1 == 5) && _settings.EnableReturnAddressStack)
+                    return (true, _ras.Pop());
+                if ((rd == 1 || rd == 5) && _settings.EnableReturnAddressStack)
+                    _ras.Push(pc + size);
+            }
+            
+            return (false, 0);
         }
     }
 }

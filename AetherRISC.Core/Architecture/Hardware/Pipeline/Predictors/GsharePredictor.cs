@@ -1,82 +1,67 @@
 using AetherRISC.Core.Abstractions.Interfaces;
 using System;
-using System.Runtime.CompilerServices;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors
 {
-    public unsafe class GsharePredictor : IBranchPredictor
+    public class TunableGSharePredictor : IBranchPredictor
     {
-        public string Name => "Gshare (Global History)";
-
-        private const int HistoryBits = 12; 
-        private const int TableSize = 1 << HistoryBits;
-        private const int Mask = TableSize - 1;
-
-        private readonly byte[] _pht = new byte[TableSize];
-        private readonly ulong[] _targetBuffer = new ulong[TableSize];
-        private readonly ulong[] _tagBuffer = new ulong[TableSize];
+        // FIXED: Added missing fields
+        private readonly int _historyBits;
+        private readonly int _tableBits;
         
-        private uint _globalHistory = 0;
+        public string Name => $"GShare (H:{_historyBits}, T:{_tableBits})";
 
-        public GsharePredictor()
+        private readonly byte[] _pht; 
+        private readonly ulong[] _btb; 
+        private readonly ulong[] _tag; 
+        
+        private readonly int _mask;
+        private uint _globalHistory;
+
+        public TunableGSharePredictor(int historyBits, int tableBits)
         {
+            _historyBits = historyBits;
+            _tableBits = tableBits;
+            
+            int size = 1 << tableBits;
+            _mask = size - 1;
+
+            _pht = new byte[size];
+            _btb = new ulong[size];
+            _tag = new ulong[size];
+
             Array.Fill(_pht, (byte)1); 
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public BranchPrediction Predict(ulong currentPC)
+        public BranchPrediction Predict(ulong pc)
         {
-            uint pcPart = (uint)((currentPC >> 1) & Mask);
-            uint index = pcPart ^ _globalHistory;
-            
-            bool predictTaken;
-            ulong target = 0;
+            // FIXED: Explicit casts for ulong & int mixing
+            uint pcPart = (uint)((pc >> 1) & (ulong)_mask);
+            uint index = (pcPart ^ _globalHistory) & (uint)_mask;
 
-            fixed (byte* phtPtr = _pht)
-            fixed (ulong* targetPtr = _targetBuffer)
-            fixed (ulong* tagPtr = _tagBuffer)
-            {
-                byte state = phtPtr[index];
-                predictTaken = state >= 2;
+            if (_tag[pcPart] != pc) 
+                return new BranchPrediction { PredictedTaken = false, TargetAddress = 0 };
 
-                if (tagPtr[pcPart] == currentPC)
-                {
-                    target = targetPtr[pcPart];
-                }
-            }
-
-            if (target == 0) predictTaken = false;
-
-            return new BranchPrediction 
-            { 
-                PredictedTaken = predictTaken, 
-                TargetAddress = target 
-            };
+            bool take = _pht[index] >= 2;
+            return new BranchPrediction { PredictedTaken = take, TargetAddress = take ? _btb[pcPart] : 0 };
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void Update(ulong branchPC, bool actuallyTaken, ulong actualTarget)
+        public void Update(ulong pc, bool taken, ulong target)
         {
-            uint pcPart = (uint)((branchPC >> 1) & Mask);
-            uint index = pcPart ^ _globalHistory;
+            // FIXED: Explicit casts
+            uint pcPart = (uint)((pc >> 1) & (ulong)_mask);
+            uint index = (pcPart ^ _globalHistory) & (uint)_mask;
 
-            fixed (byte* phtPtr = _pht)
-            {
-                byte state = phtPtr[index];
-                if (actuallyTaken) { if (state < 3) state++; }
-                else { if (state > 0) state--; }
-                phtPtr[index] = state;
-            }
+            byte state = _pht[index];
+            if (taken) { if (state < 3) state++; }
+            else       { if (state > 0) state--; }
+            _pht[index] = state;
 
-            _globalHistory = (_globalHistory << 1) | (actuallyTaken ? 1u : 0u);
-            _globalHistory &= Mask;
+            _tag[pcPart] = pc;
+            if (taken) _btb[pcPart] = target;
 
-            fixed (ulong* tagPtr = _tagBuffer)
-            fixed (ulong* targetPtr = _targetBuffer)
-            {
-                tagPtr[pcPart] = branchPC;
-                if (actuallyTaken) targetPtr[pcPart] = actualTarget;
-            }
+            _globalHistory = (_globalHistory << 1) | (taken ? 1u : 0u);
+            _globalHistory &= (uint)((1 << _historyBits) - 1);
         }
     }
 }

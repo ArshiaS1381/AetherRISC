@@ -2,31 +2,32 @@ namespace AetherRISC.Core.Abstractions.Diagnostics
 {
     public class PerformanceMetrics
     {
-        // Pipeline-level commits (Instructions that flowed through WB)
-        public ulong InstructionsRetired { get; set; }
-        
-        // ISA-level instructions (Effective instructions executed, e.g. a Fused op counts as 2)
-        public ulong IsaInstructionsRetired { get; set; }
-
-        public ulong TotalCycles { get; set; }
-        public ulong TotalBranches { get; set; }
-        public ulong BranchMisses { get; set; }
-        public ulong BranchHits { get; set; }
-        public ulong ControlHazardFlushes { get; set; }
-        public ulong DataHazardStalls { get; set; }
         public int PipelineWidth { get; set; }
-
-        // Pipeline Throughput (Commits per cycle)
-        public double PipelineIPC => TotalCycles == 0 ? 0 : (double)InstructionsRetired / TotalCycles;
+        public ulong TotalCycles { get; set; }
+        public ulong InstructionsRetired { get; set; }
+        public ulong IsaInstructionsRetired { get; set; }
         
-        // Effective Throughput (ISA work per cycle - usually higher if fusion is on)
-        public double EffectiveIPC => TotalCycles == 0 ? 0 : (double)IsaInstructionsRetired / TotalCycles;
+        // Pipeline Stats
+        public ulong DataHazardStalls { get; set; }
+        public ulong ControlHazardFlushes { get; set; }
+        public ulong TotalBranches { get; set; }
+        public ulong BranchHits { get; set; }
+        public ulong BranchMisses { get; set; }
 
-        public double BranchAccuracy => TotalBranches == 0 ? 100.0 : (double)BranchHits / TotalBranches * 100.0;
-        
-        // Fix CS0034: Explicitly cast PipelineWidth to ulong to resolve ambiguity
-        public double SlotUtilization => (TotalCycles * (ulong)PipelineWidth) == 0 
-            ? 0 
-            : (double)InstructionsRetired / (double)(TotalCycles * (ulong)PipelineWidth) * 100.0;
+        // Cache Stats
+        public CacheMetric L1I { get; } = new();
+        public CacheMetric L1D { get; } = new();
+        public CacheMetric L2 { get; } = new();
+        public CacheMetric L3 { get; } = new();
+
+        public class CacheMetric
+        {
+            public ulong Hits { get; set; }
+            public ulong Misses { get; set; }
+            public ulong Evictions { get; set; }
+            public double HitRate => (Hits + Misses) == 0 ? 0 : (double)Hits / (Hits + Misses) * 100.0;
+        }
+
+        public double Ipc => TotalCycles == 0 ? 0 : (double)InstructionsRetired / TotalCycles;
     }
 }

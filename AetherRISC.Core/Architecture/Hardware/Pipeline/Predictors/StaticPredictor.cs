@@ -2,19 +2,21 @@ using AetherRISC.Core.Abstractions.Interfaces;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Predictors
 {
-    public class StaticPredictor : IBranchPredictor
+    public class TunableStaticPredictor : IBranchPredictor
     {
-        public string Name => "Static (Always Not Taken)";
+        private readonly bool _predictTaken;
+        public string Name => $"Static (Always {(_predictTaken ? "Taken" : "Not Taken")})";
+
+        public TunableStaticPredictor(bool predictTaken)
+        {
+            _predictTaken = predictTaken;
+        }
 
         public BranchPrediction Predict(ulong currentPC)
         {
-            // Always predict fallthrough
-            return new BranchPrediction { PredictedTaken = false, TargetAddress = 0 };
+            return new BranchPrediction { PredictedTaken = _predictTaken, TargetAddress = 0 };
         }
 
-        public void Update(ulong branchPC, bool actuallyTaken, ulong actualTarget)
-        {
-            // Static predictor has no state to update
-        }
+        public void Update(ulong branchPC, bool actuallyTaken, ulong actualTarget) { }
     }
 }

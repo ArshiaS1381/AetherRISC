@@ -17,17 +17,22 @@ namespace AetherRISC.VectorCacheMemoryTests
             var s = new MachineState(SystemConfig.Rv64(), cfg);
             s.AttachMemory(new SystemBus(0xFFFFFFFF));
             
+            // li large (2), lw (1), add (1), ebreak (1) = 5 instructions minimum.
+            // +1 stall.
             new SourceAssembler("li x2, 100\nlw x1, 0(x2)\nadd x3, x1, x1\nebreak").Assemble(s);
             
             var r = new PipelinedRunner(s, new NullLogger(), cfg);
             r.Run(20);
             
-            Assert.True(r.Metrics.DataHazardStalls > 0);
+            Assert.True(r.Metrics.DataHazardStalls > 0, "No data hazard stalls recorded");
         }
 
         [Fact]
         public void Pipeline_ControlHazard_Flush()
         {
+            // bne taken. Static prediction (NT). 
+            // Pipeline fetches NOPs. Execute stage detects taken.
+            // Flush. Fetch target (li x3, 99).
             var cfg = new ArchitectureSettings { PipelineWidth = 1, StaticPredictTaken = false };
             var s = new MachineState(SystemConfig.Rv64(), cfg);
             s.AttachMemory(new SystemBus(0xFFFFFFFF));
@@ -38,7 +43,7 @@ namespace AetherRISC.VectorCacheMemoryTests
             r.Run(50);
             
             Assert.Equal(99ul, s.Registers.Read(3));
-            Assert.True(r.Metrics.ControlHazardFlushes > 0);
+            Assert.True(r.Metrics.ControlHazardFlushes > 0, "No control hazard flushes recorded");
         }
 
         [Fact]
@@ -51,7 +56,7 @@ namespace AetherRISC.VectorCacheMemoryTests
             new SourceAssembler("add x1,x0,x0\nadd x2,x0,x0\nebreak").Assemble(s);
             
             var r = new PipelinedRunner(s, new NullLogger(), cfg);
-            r.Run(10);
+            r.Run(20);
             
             Assert.Equal(0ul, s.Registers.Read(1));
         }

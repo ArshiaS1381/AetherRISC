@@ -62,6 +62,7 @@ namespace AetherRISC.Core.Assembler
             CurrentDataPtr = DataBase;
             InTextSection = true;
 
+            // --- FIRST PASS: SYMBOL RESOLUTION ---
             IsFirstPass = true;
             foreach (var rawLine in _lines)
             {
@@ -74,16 +75,31 @@ namespace AetherRISC.Core.Assembler
                     line = parts.Last().Trim();
                 }
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                if (line.StartsWith(".")) HandleDirective(line);
-                else if (InTextSection) {
-                    var tokens = Tokenize(line);
-                    if (tokens.Length == 0) continue;
-                    var m = tokens[0].ToUpperInvariant();
-                    if (m == "LA" || m == "CALL" || m == "TAIL" || m == "LI") CurrentTextPtr += 8u; 
-                    else CurrentTextPtr += 4u;
+                
+                if (line.StartsWith(".")) 
+                {
+                    HandleDirective(line);
+                }
+                else if (InTextSection) 
+                {
+                    // Calculate precise size for pseudos and instructions
+                    var (mUpper, args) = ParseLine(line);
+                    if (mUpper == null) continue;
+
+                    var expanded = TryExpandPseudo(mUpper, args, CurrentTextPtr);
+                    if (expanded != null)
+                    {
+                        CurrentTextPtr += (uint)(expanded.Count() * 4);
+                    }
+                    else
+                    {
+                        // Assume standard 4-byte instruction
+                        CurrentTextPtr += 4u;
+                    }
                 }
             }
 
+            // --- SECOND PASS: CODE GENERATION ---
             IsFirstPass = false;
             CurrentTextPtr = TextBase;
             CurrentDataPtr = DataBase;
@@ -99,41 +115,54 @@ namespace AetherRISC.Core.Assembler
 
                 if (line.StartsWith(".")) { HandleDirective(line); continue; }
 
-                var tokens = Tokenize(line);
-                if (tokens.Length == 0) continue;
-
-                var mRaw = tokens[0];
-                var mUpper = mRaw.ToUpperInvariant();
-                var args = tokens.Skip(1).ToArray();
-
-                if (args.Length == 2 && args[1].Contains("(")) {
-                    var parts = args[1].Split(new[] { '(', ')' }, StringSplitOptions.RemoveEmptyEntries);
-                    args = new[] { args[0], parts[0], parts[1] }; 
-                }
+                var (mUpper, args) = ParseLine(line);
+                if (mUpper == null) continue;
 
                 var expanded = TryExpandPseudo(mUpper, args, CurrentTextPtr);
                 var toEncode = expanded?.ToList();
 
                 if (toEncode == null)
                 {
-                    // FIX: Handle CSR aliases manually
+                    var tokens = Tokenize(line);
+                    var mOriginal = tokens[0];
+
                     if (mUpper == "CSRR") { 
-                        mRaw = "Csrrs";
+                        mOriginal = "Csrrs";
                         args = new[] { args[0], args[1], "x0" };
                     }
                     else if (mUpper == "CSRW") {
-                        mRaw = "Csrrw";
+                        mOriginal = "Csrrw";
                         args = new[] { "x0", args[0], args[1] };
                     }
                     
-                    toEncode = new List<IInstruction> { BindInstruction(mRaw, args, CurrentTextPtr) };
+                    toEncode = new List<IInstruction> { BindInstruction(mOriginal, args, CurrentTextPtr) };
                 }
 
                 foreach (var inst in toEncode) {
-                    state.Memory!.WriteWord(CurrentTextPtr, InstructionEncoder.Encode(inst));
+                    uint encoded = InstructionEncoder.Encode(inst);
+                    state.Memory!.WriteWord(CurrentTextPtr, encoded);
                     CurrentTextPtr += 4;
                 }
             }
+        }
+
+        private (string? Mnemonic, string[] Args) ParseLine(string line)
+        {
+            var tokens = Tokenize(line);
+            if (tokens.Length == 0) return (null, Array.Empty<string>());
+
+            var mRaw = tokens[0];
+            var mUpper = mRaw.ToUpperInvariant();
+            var args = tokens.Skip(1).ToArray();
+
+            // Handle offsets like 0(x1)
+            // Note: Tokenizer splits 0(x1) into "0", "x1" automatically usually,
+            // but if not, this manual split ensures consistent 3-arg format for Loads/Stores
+            if (args.Length == 2 && args[1].Contains("(")) {
+                var parts = args[1].Split(new[] { '(', ')' }, StringSplitOptions.RemoveEmptyEntries);
+                args = new[] { args[0], parts[0], parts[1] }; 
+            }
+            return (mUpper, args);
         }
 
         private void HandleDirective(string line) {
@@ -189,6 +218,7 @@ namespace AetherRISC.Core.Assembler
             var method = _instMethods.FirstOrDefault(mi => mi.Name.Equals(mClean, StringComparison.OrdinalIgnoreCase));
             if (method == null) throw new Exception($"Unknown instruction {m}");
             
+            // Reordering for Stores: sb rs2, off(rs1) -> [rs1, rs2, off]
             if (mClean.EndsWith("sw", StringComparison.OrdinalIgnoreCase) || 
                 mClean.EndsWith("sb", StringComparison.OrdinalIgnoreCase) || 
                 mClean.EndsWith("sd", StringComparison.OrdinalIgnoreCase) ||
@@ -199,6 +229,32 @@ namespace AetherRISC.Core.Assembler
                     var imm = args[1];
                     var rs1 = args[2];
                     args = new[] { rs1, rs2, imm };
+                }
+            }
+            // Reordering for Loads: lb rd, off(rs1) -> [rd, rs1, off]
+            else if (mClean.StartsWith("l", StringComparison.OrdinalIgnoreCase) && 
+                    !mClean.Equals("li", StringComparison.OrdinalIgnoreCase) && 
+                    !mClean.Equals("la", StringComparison.OrdinalIgnoreCase) && 
+                    !mClean.Equals("lui", StringComparison.OrdinalIgnoreCase))
+            {
+                // Matches Lb, Lh, Lw, Ld, Lbu, Lhu, Lwu
+                if (args.Length >= 3) {
+                    var rd = args[0];
+                    var imm = args[1];
+                    var rs1 = args[2];
+                    args = new[] { rd, rs1, imm };
+                }
+            }
+            // Reordering for CSRs: csrrw rd, csr, rs1 -> [rd, rs1, csr]
+            else if (mClean.StartsWith("Csr", StringComparison.OrdinalIgnoreCase) && 
+                    !mClean.Contains("i")) // Exclude Immediate variants which are naturally [rd, uimm, csr] in ASM -> [rd, rs1, imm]
+            {
+                // csrrw rd, csr, rs1. Constructor expects (rd, rs1, imm)
+                if (args.Length >= 3) {
+                    var rd = args[0];
+                    var csr = args[1];
+                    var rs1 = args[2];
+                    args = new[] { rd, rs1, csr };
                 }
             }
 
@@ -225,15 +281,13 @@ namespace AetherRISC.Core.Assembler
                 long imm = ParseImmediate(argStr);
                 
                 // FIX: LUI and AUIPC need shifting if the immediate is small
-                // Note: The generator uses raw values. We must conform to that.
                 if ((method.Name.Equals("Lui", StringComparison.OrdinalIgnoreCase) || 
                      method.Name.Equals("Auipc", StringComparison.OrdinalIgnoreCase)) && i == 1)
                 {
-                    // If parsing "0x1000", keep it. If parsing "1", logic dictates it might be 0x1000? 
-                    // No, assembler generally takes raw.
-                    // But if execution is failing with 0, we check if shifting is needed.
-                    // Previous successful code HAD this shift. Re-adding it.
-                    imm <<= 12;
+                    if ((imm & 0xFFFFF000) == 0 && imm != 0)
+                    {
+                        imm <<= 12;
+                    }
                 }
 
                 convertedArgs[i] = Convert.ChangeType(imm, pType);

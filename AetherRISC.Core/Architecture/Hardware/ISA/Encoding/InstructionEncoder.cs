@@ -126,7 +126,6 @@ public static partial class InstructionEncoder
     public static uint GenB(uint op, uint f3, IInstruction i)
     {
         int imm = i.Imm;
-
         uint b12   = (uint)((imm >> 12) & 1);
         uint b11   = (uint)((imm >> 11) & 1);
         uint b10_5 = (uint)((imm >> 5) & 0x3F);

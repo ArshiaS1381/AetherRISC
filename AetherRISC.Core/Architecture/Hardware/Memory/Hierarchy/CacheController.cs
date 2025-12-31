@@ -9,7 +9,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
         public bool Dirty;
         public ulong Tag;
         public ulong LastAccessTick;
-        public byte[] Data; // Actual data storage
+        public byte[] Data;
 
         public CacheLine(int size) { Data = new byte[size]; }
     }
@@ -36,14 +36,12 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
 
         public CacheLine GetVictim(ulong currentTick)
         {
-            // Invalid lines first
             for (int i = 0; i < _ways.Length; i++)
                 if (!_ways[i].Valid) return _ways[i];
 
             if (_policy == ReplacementPolicy.Random)
                 return _ways[_rng.Next(_ways.Length)];
 
-            // LRU
             CacheLine victim = _ways[0];
             ulong minTick = ulong.MaxValue;
             foreach (var way in _ways)
@@ -95,7 +93,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
 
         public void Tick() => _globalTick++;
 
-        // Returns true on Hit
+        // Byte Access
         public bool TryRead(uint address, out byte val)
         {
             ulong index = (address >> _indexShift) & (ulong)_setMask;
@@ -112,7 +110,6 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
             return false;
         }
 
-        // Returns true on Hit, false on Miss
         public bool TryWrite(uint address, byte val)
         {
             ulong index = (address >> _indexShift) & (ulong)_setMask;
@@ -129,6 +126,52 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
             return false;
         }
 
+        // Word Access (Atomic check for metrics accuracy)
+        public bool TryReadWord(uint address, out uint val)
+        {
+            ulong index = (address >> _indexShift) & (ulong)_setMask;
+            ulong tag = address >> _tagShift;
+            var line = _sets[index].Find(tag);
+
+            if (line != null)
+            {
+                line.LastAccessTick = _globalTick;
+                int offset = (int)(address & (_lineSize - 1));
+                // Ensure word doesn't straddle cache line boundary
+                if (offset + 4 <= _lineSize)
+                {
+                    val = (uint)(line.Data[offset] | (line.Data[offset+1] << 8) | (line.Data[offset+2] << 16) | (line.Data[offset+3] << 24));
+                    return true;
+                }
+            }
+            val = 0;
+            return false;
+        }
+
+        public bool TryWriteWord(uint address, uint val)
+        {
+            ulong index = (address >> _indexShift) & (ulong)_setMask;
+            ulong tag = address >> _tagShift;
+            var line = _sets[index].Find(tag);
+
+            if (line != null)
+            {
+                line.LastAccessTick = _globalTick;
+                int offset = (int)(address & (_lineSize - 1));
+                if (offset + 4 <= _lineSize)
+                {
+                    line.Data[offset] = (byte)(val & 0xFF);
+                    line.Data[offset+1] = (byte)((val >> 8) & 0xFF);
+                    line.Data[offset+2] = (byte)((val >> 16) & 0xFF);
+                    line.Data[offset+3] = (byte)((val >> 24) & 0xFF);
+                    
+                    if (WritePolicy == WritePolicy.WriteBack) line.Dirty = true;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public void Fill(uint address, byte[] data, out ulong? evictedAddr, out byte[]? evictedData)
         {
             evictedAddr = null;
@@ -141,13 +184,12 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
 
             if (line.Valid && line.Dirty)
             {
-                // Reconstruct address
                 evictedAddr = (line.Tag << _tagShift) | (index << _indexShift);
                 evictedData = (byte[])line.Data.Clone();
             }
 
             line.Valid = true;
-            line.Dirty = false; // Fresh fill is clean
+            line.Dirty = false; 
             line.Tag = tag;
             line.LastAccessTick = _globalTick;
             Array.Copy(data, line.Data, _lineSize);

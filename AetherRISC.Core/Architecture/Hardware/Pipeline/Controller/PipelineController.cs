@@ -24,32 +24,31 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
         private readonly ControlHazardUnit _controlHazard;
         
         private readonly MachineState _state;
+        private readonly int _flushPenalty;
+        private int _flushCounter = 0;
 
         public PipelineController(MachineState state, ArchitectureSettings settings)
         {
             _state = state;
+            _flushPenalty = settings.BranchFlushPenalty;
             Buffers = new PipelineBuffers(settings);
             Predictor = PredictorFactory.Create(settings);
             Metrics.PipelineWidth = settings.PipelineWidth;
             
-            // Re-attach memory to inject the Metrics into the CachedMemoryBus
-            if(state.Memory != null && state.Memory is not AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy.CachedMemoryBus)
-            {
-                state.AttachMemory(state.Memory, Metrics);
-            }
-            else if (state.Memory != null && settings.EnableCacheSimulation)
+            // Auto-attach functional cache wrapper if enabled
+            if(state.Memory != null && settings.EnableCacheSimulation && !(state.Memory is AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy.CachedMemoryBus))
             {
                 state.AttachMemory(state.Memory, Metrics);
             }
             
             _fetch = new FetchStage(state, settings);
             _decode = new DecodeStage(state, settings);
-            _execute = new ExecuteStage(state, settings); // ExecuteStage no longer handles resource counting
+            _execute = new ExecuteStage(state, settings);
             _memory = new MemoryStage(state);
             _writeback = new WritebackStage(state);
             
             _dataHazard = new DataHazardUnit { StateContext = state, Settings = settings };
-            _structHazard = new StructuralHazardUnit(settings); // New constructor
+            _structHazard = new StructuralHazardUnit(settings);
             _controlHazard = new ControlHazardUnit();
         }
 
@@ -58,22 +57,19 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
             Metrics.TotalCycles++;
             Buffers.ResetStalls();
 
+            // 1. Hazards
             _dataHazard.Resolve(Buffers);
-            if (_structHazard.DetectAndHandle(Buffers)) 
-            {
-                // Optionally track structural stalls in metrics here
-            }
-
+            _structHazard.DetectAndHandle(Buffers);
+            
             if (Buffers.FetchDecode.IsStalled) Metrics.DataHazardStalls++;
 
+            // 2. Commit / Writeback
             _writeback.Run(Buffers);
             
-            // Retirement
             for(int i=0; i<Buffers.Width; i++) 
             {
                 var slot = Buffers.MemoryWriteback.Slots[i];
                 if (_state.Halted) break;
-                
                 if (slot.Valid && !slot.IsBubble) 
                 {
                     Metrics.InstructionsRetired++;
@@ -85,9 +81,11 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
 
             if (_state.Halted) { Buffers.FlushAll(); return; }
 
+            // 3. Execution & Memory
             _memory.Run(Buffers);
             _execute.Run(Buffers);
             
+            // 4. Branch Update
             for(int i=0; i<Buffers.Width; i++)
             {
                 var op = Buffers.ExecuteMemory.Slots[i];
@@ -98,10 +96,26 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Controller
                 }
             }
 
-            if (_controlHazard.DetectAndHandle(Buffers)) Metrics.ControlHazardFlushes++;
+            // 5. Control Hazards (Mispredicts)
+            if (_controlHazard.DetectAndHandle(Buffers)) 
+            {
+                Metrics.ControlHazardFlushes++;
+                _flushCounter = _flushPenalty; // Set penalty
+            }
 
-            _decode.Run(Buffers);
-            _fetch.Run(Buffers, Predictor); 
+            // 6. Fetch / Decode
+            if (_flushCounter > 0)
+            {
+                // Simulate stall cycles due to flush penalty
+                Buffers.FetchDecode.Flush();
+                Buffers.DecodeExecute.Flush();
+                _flushCounter--;
+            }
+            else
+            {
+                _decode.Run(Buffers);
+                _fetch.Run(Buffers, Predictor); 
+            }
         }
     }
 }

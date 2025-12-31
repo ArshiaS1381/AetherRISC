@@ -29,9 +29,6 @@ namespace AetherRISC.Core.Architecture
 
         public CacheConfiguration() {}
 
-        /// <summary>
-        /// Helper to configure size based on geometry.
-        /// </summary>
         public void ConfigureGeometry(int lines, int wordsPerLine, int wordSizeBytes = 4)
         {
             LineSizeBytes = wordsPerLine * wordSizeBytes;
@@ -46,6 +43,7 @@ namespace AetherRISC.Core.Architecture
         // --- Pipeline Configuration ---
         public int PipelineWidth { get; set; } = 2;
         public double FetchBufferRatio { get; set; } = 2.0; 
+        public int BranchFlushPenalty { get; set; } = 2; // NEW: Tunable flush cost
         
         // --- Functional Unit Constraints (0 = Infinite) ---
         public int MaxIntALUs { get; set; } = 2;
@@ -68,13 +66,9 @@ namespace AetherRISC.Core.Architecture
         // --- Branch Prediction ---
         public string BranchPredictorType { get; set; } = "gshare"; 
         public bool StaticPredictTaken { get; set; } = false;
-        
-        // Bimodal
         public int BimodalTableSizeBits { get; set; } = 12;
         public int BimodalCounterBits { get; set; } = 2;
-        public int BimodalInitialValue { get; set; } = 1; // Fixed: Added missing property
-        
-        // GShare
+        public int BimodalInitialValue { get; set; } = 1;
         public int GShareHistoryBits { get; set; } = 12;
         public int GShareTableBits { get; set; } = 14;
 
@@ -82,13 +76,12 @@ namespace AetherRISC.Core.Architecture
         public bool EnableCacheSimulation { get; set; } = false;
         public uint MmioStartAddress { get; set; } = 0xF0000000; 
 
-        // Detailed Cache Configs (Tunable per level)
+        // Detailed Cache Configs
         public CacheConfiguration L1I { get; set; } = new(32 * 1024, 4, 64, 1);
         public CacheConfiguration L1D { get; set; } = new(32 * 1024, 4, 64, 2);
         public CacheConfiguration L2 { get; set; } = new(256 * 1024, 8, 64, 10) { Enabled = false };
         public CacheConfiguration L3 { get; set; } = new(2 * 1024 * 1024, 16, 64, 30) { Enabled = false };
 
-        // Main Memory
         public int DramLatencyCycles { get; set; } = 100;
 
         // --- RVV (Vectors) ---

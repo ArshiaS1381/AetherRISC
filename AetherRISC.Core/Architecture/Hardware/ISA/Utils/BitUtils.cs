@@ -5,62 +5,59 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Utils
     public static class BitUtils
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int SignExtend(int value, int bits)
+        public static int SignExtend(uint value, int bits)
         {
             int shift = 32 - bits;
-            return (value << shift) >> shift;
+            return ((int)value << shift) >> shift;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ExtractITypeImm(uint inst)
+        public static int ExtractITypeImm(uint raw)
         {
-            // inst[31:20]
-            return SignExtend((int)(inst >> 20), 12);
+            return SignExtend(raw >> 20, 12);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ExtractSTypeImm(uint inst)
+        public static int ExtractSTypeImm(uint raw)
         {
-            // inst[31:25] | inst[11:7]
-            int imm = (int)(((inst >> 25) << 5) | ((inst >> 7) & 0x1F));
-            return SignExtend(imm, 12);
+            uint imm11_5 = (raw >> 25) & 0x7F;
+            uint imm4_0 = (raw >> 7) & 0x1F;
+            return SignExtend((imm11_5 << 5) | imm4_0, 12);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ExtractBTypeImm(uint inst)
+        public static int ExtractBTypeImm(uint raw)
         {
-            // inst[31], inst[7], inst[30:25], inst[11:8]
-            int imm = (int)(((inst >> 31) & 1) << 12)
-                    | (int)(((inst >> 7) & 1) << 11)
-                    | (int)(((inst >> 25) & 0x3F) << 5)
-                    | (int)(((inst >> 8) & 0xF) << 1);
+            uint imm12 = (raw >> 31) & 0x1;
+            uint imm10_5 = (raw >> 25) & 0x3F;
+            uint imm4_1 = (raw >> 8) & 0xF;
+            uint imm11 = (raw >> 7) & 0x1;
+            
+            uint imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
+            // Bit 0 is always 0 for branches, but we extract as is. The format effectively multiplies by 2.
+            // Actually RISC-V B-immediate encodes bits 12|10:5|4:1|11. 
+            // The result is a 13-bit signed offset (multiples of 2).
             return SignExtend(imm, 13);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ExtractUTypeImm(uint inst)
+        public static int ExtractUTypeImm(uint raw)
         {
-            // inst[31:12] << 12
-            return (int)(inst & 0xFFFFF000);
+            // U-type puts imm[31:12] into rd.
+            // The immediate itself is the upper 20 bits, signed 32-bit.
+            return (int)(raw & 0xFFFFF000);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ExtractJTypeImm(uint inst)
+        public static int ExtractJTypeImm(uint raw)
         {
-             // inst[31], inst[19:12], inst[20], inst[30:21]
-             int imm = (int)(((inst >> 31) & 1) << 20)
-                     | (int)(((inst >> 12) & 0xFF) << 12)
-                     | (int)(((inst >> 20) & 1) << 11)
-                     | (int)(((inst >> 21) & 0x3FF) << 1);
-             return SignExtend(imm, 21);
+            uint imm20 = (raw >> 31) & 0x1;
+            uint imm10_1 = (raw >> 21) & 0x3FF;
+            uint imm11 = (raw >> 20) & 0x1;
+            uint imm19_12 = (raw >> 12) & 0xFF;
+
+            uint imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
+            return SignExtend(imm, 21);
         }
         
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ExtractShamt(uint inst, int xlen)
+        public static int ExtractShamt(uint raw, int xlen)
         {
-             int shamtBits = (xlen == 64) ? 6 : 5;
-             int mask = (1 << shamtBits) - 1;
-             return (int)((inst >> 20) & (uint)mask);
+            return (int)((raw >> 20) & (xlen == 64 ? 0x3F : 0x1F));
         }
     }
 }

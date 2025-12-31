@@ -1,5 +1,6 @@
 using AetherRISC.Core.Abstractions.Interfaces;
 using AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64I;
+using AetherRISC.Core.Architecture.Hardware.ISA.Extensions.Zicsr;
 using AetherRISC.Core.Architecture.Hardware.ISA.Utils;
 
 namespace AetherRISC.Core.Architecture.Hardware.ISA.Decoding;
@@ -26,7 +27,7 @@ public partial class InstructionDecoder
             if (f3 == 4) return new XoriInstruction(rd, rs1, iImm);
             if (f3 == 6) return new OriInstruction(rd, rs1, iImm);
             if (f3 == 7) return new AndiInstruction(rd, rs1, iImm);
-            if (f3 == 1) return new SlliInstruction(rd, rs1, iImm);
+            if (f3 == 1) return new SlliInstruction(rd, rs1, iImm); // Shamt handled inside
             if (f3 == 5) {
                  if (((raw >> 26) & 0x3F) == 0) return new SrliInstruction(rd, rs1, iImm);
                  if (((raw >> 26) & 0x3F) == 0x10) return new SraiInstruction(rd, rs1, iImm);
@@ -95,6 +96,22 @@ public partial class InstructionDecoder
         if (opcode == 0x6F) return new JalInstruction(rd, BitUtils.ExtractJTypeImm(raw));
         if (opcode == 0x67) return new JalrInstruction(rd, rs1, BitUtils.ExtractITypeImm(raw));
         
+        // SYSTEM / ZICSR (0x73)
+        if (opcode == 0x73)
+        {
+            int imm = BitUtils.ExtractITypeImm(raw);
+            if (f3 == 0 && f7 == 0) {
+                 if (imm == 0) return new AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RvSystem.EcallInstruction(rd, rs1, imm);
+                 if (imm == 1) return new AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RvSystem.EbreakInstruction(rd, rs1, imm);
+            }
+            if (f3 == 1) return new CsrrwInstruction(rd, rs1, imm);
+            if (f3 == 2) return new CsrrsInstruction(rd, rs1, imm);
+            if (f3 == 3) return new CsrrcInstruction(rd, rs1, imm);
+            if (f3 == 5) return new CsrrwiInstruction(rd, rs1, imm);
+            if (f3 == 6) return new CsrrsiInstruction(rd, rs1, imm);
+            if (f3 == 7) return new CsrrciInstruction(rd, rs1, imm);
+        }
+
         return null;
     }
 }

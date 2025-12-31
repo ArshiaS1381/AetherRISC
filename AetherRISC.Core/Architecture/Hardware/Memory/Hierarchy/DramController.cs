@@ -28,21 +28,31 @@ namespace AetherRISC.Core.Architecture.Hardware.Memory.Hierarchy
             {
                 if (openRow == rowId)
                 {
-                    latency = _config.CAS; // Row Hit
-                    if (_config.PagePolicy == DramPagePolicy.ClosePage) _openRows.Remove(bankId);
+                    // Row Hit
+                    latency = _config.CAS; 
+                    if (_config.PagePolicy == DramPagePolicy.ClosePage) 
+                        _openRows.Remove(bankId);
                 }
                 else
                 {
                     // Row Conflict: Precharge + Activate + CAS
                     latency = _config.RP + _config.RCD + _config.CAS;
-                    _openRows[bankId] = rowId;
+                    
+                    if (_config.PagePolicy == DramPagePolicy.OpenPage)
+                        _openRows[bankId] = rowId;
+                    else
+                        _openRows.Remove(bankId); // Close immediately after acccess
                 }
             }
             else
             {
                 // Row Closed: Activate + CAS
                 latency = _config.RCD + _config.CAS;
-                _openRows[bankId] = rowId;
+                
+                if (_config.PagePolicy == DramPagePolicy.OpenPage)
+                    _openRows[bankId] = rowId;
+                else
+                    _openRows.Remove(bankId); // Ensure it stays closed
             }
 
             int bytesPerBurst = (_config.BusWidthBits / 8) * _config.BurstLength; 

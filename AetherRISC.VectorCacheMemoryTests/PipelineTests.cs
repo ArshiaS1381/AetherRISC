@@ -13,10 +13,6 @@ namespace AetherRISC.VectorCacheMemoryTests
         [Fact]
         public void DataHazard_LoadUse_CreatesStall()
         {
-            // lw x1, 0(x2)  -> Memory stage produces result
-            // add x3, x1, x1 -> Execute stage needs result immediately
-            // This requires a stall (bubble) because Forwarding cannot go Mem -> Ex backwards in time within same cycle
-            
             string asm = @"
                 .text
                 li x2, 100
@@ -25,31 +21,39 @@ namespace AetherRISC.VectorCacheMemoryTests
                 ebreak
             ";
 
-            var cfg = new ArchitectureSettings { PipelineWidth = 1 }; // Scalar for easier counting
+            var cfg = new ArchitectureSettings { PipelineWidth = 1 };
             var sys = SystemConfig.Rv64();
             var state = new MachineState(sys, cfg);
-            state.AttachMemory(new PhysicalRam(0, 1024));
+            var ram = new PhysicalRam(0, 1024);
+            state.AttachMemory(ram);
             
             new SourceAssembler(asm).Assemble(state);
             var runner = new PipelinedRunner(state, new NullLogger(), cfg);
             
             runner.Run(20);
 
-            // We expect at least 1 Data Hazard stall
-            Assert.True(runner.Metrics.DataHazardStalls > 0, "Pipeline did not stall on Load-Use hazard");
+            Assert.True(runner.Metrics.DataHazardStalls > 0, "Pipeline did not stall");
+            
+            state.Memory?.WriteWord(100, 10);
+            
+            state.ProgramCounter = sys.ResetVector;
+            state.Halted = false;
+            runner = new PipelinedRunner(state, new NullLogger(), cfg);
+            
+            runner.Run(50);
+            
+            Assert.Equal(20ul, state.Registers.Read(3)); 
         }
 
         [Fact]
         public void ControlHazard_BranchMispredict_FlushesPipeline()
         {
-            // BNE is taken. If predicted NotTaken (default), we fetch wrong path.
-            // Verify execution result matches correct path, AND flush counter increased.
             string asm = @"
                 .text
                 li x1, 1
                 li x2, 2
                 bne x1, x2, target
-                li x3, 0xBAD     # Should be skipped/flushed
+                li x3, 0xBAD     
                 ebreak
                 target:
                 li x3, 0xCAFE
@@ -59,7 +63,7 @@ namespace AetherRISC.VectorCacheMemoryTests
             var cfg = new ArchitectureSettings 
             { 
                 PipelineWidth = 1,
-                StaticPredictTaken = false, // Force mispredict on BNE
+                StaticPredictTaken = false,
                 BranchPredictorType = "static"
             };
             
@@ -70,16 +74,15 @@ namespace AetherRISC.VectorCacheMemoryTests
             new SourceAssembler(asm).Assemble(state);
             var runner = new PipelinedRunner(state, new NullLogger(), cfg);
             
-            runner.Run(20);
+            runner.Run(50); 
 
             Assert.Equal(0xCAFEul, state.Registers.Read(3));
-            Assert.True(runner.Metrics.ControlHazardFlushes > 0, "Pipeline did not report flush on mispredict");
+            Assert.True(runner.Metrics.ControlHazardFlushes > 0, "Flush count 0");
         }
 
         [Fact]
         public void StructuralHazard_UnitExhaustion()
         {
-            // 2 instructions needing ALU, but only 1 ALU available.
             string asm = @"
                 .text
                 add x1, x0, x0
@@ -89,8 +92,8 @@ namespace AetherRISC.VectorCacheMemoryTests
 
             var cfg = new ArchitectureSettings 
             { 
-                PipelineWidth = 2, // Superscalar fetch forced here
-                MaxIntALUs = 1     // Constrained Execution
+                PipelineWidth = 2,
+                MaxIntALUs = 1
             };
             
             var sys = SystemConfig.Rv64();
@@ -102,7 +105,6 @@ namespace AetherRISC.VectorCacheMemoryTests
             
             runner.Run(20);
             
-            // If the simulation completes without throwing, the hazard unit successfully serialized them.
             Assert.Equal(0ul, state.Registers.Read(1));
         }
     }

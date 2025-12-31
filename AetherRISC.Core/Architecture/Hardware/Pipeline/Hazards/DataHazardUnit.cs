@@ -1,5 +1,6 @@
 using AetherRISC.Core.Architecture.Hardware.Pipeline;
 using AetherRISC.Core.Architecture.Simulation.State;
+using AetherRISC.Core.Architecture;
 
 namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
 {
@@ -15,7 +16,7 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
 
         public bool Resolve(PipelineBuffers buffers)
         {
-            if (Settings == null) return false; // Early exit to prevent null dereference
+            if (Settings == null) return false;
 
             var idExSlots = buffers.DecodeExecute.Slots;
             var exMemSlots = buffers.ExecuteMemory.Slots;
@@ -27,11 +28,12 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
             {
                 var currentOp = idExSlots[i];
                 if (!currentOp.Valid || currentOp.IsBubble) continue;
-                if (stall) { currentOp.Reset(); continue; }
+                if (stall) break;
 
                 int rs1 = currentOp.Rs1;
                 int rs2 = currentOp.Rs2;
 
+                // 1. Intra-stage RAW (Cascaded execution disabled)
                 if (!Settings.AllowCascadedExecution)
                 {
                     for (int j = 0; j < i; j++)
@@ -49,6 +51,10 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
                 }
                 if (stall) break;
 
+                // 2. Load-Use Hazard
+                // If instruction in Execute (exMemSlots - waiting for Memory) is a Load,
+                // and it writes to a register we need, we must stall.
+                // Forwarding cannot help here as data comes from memory stage end.
                 for(int j = 0; j < width; j++)
                 {
                     var exOp = exMemSlots[j];
@@ -66,8 +72,10 @@ namespace AetherRISC.Core.Architecture.Hardware.Pipeline.Hazards
 
             if (stall)
             {
+                // CRITICAL FIX: Do NOT Flush. Stalling means holding the data.
+                // We freeze Fetch and Decode buffers. Execute stage will see the stall and bubble itself.
                 buffers.FetchDecode.IsStalled = true;
-                buffers.DecodeExecute.Flush(); 
+                buffers.DecodeExecute.IsStalled = true;
                 return true;
             }
 

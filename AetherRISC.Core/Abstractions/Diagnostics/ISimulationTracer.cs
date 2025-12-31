@@ -1,11 +1,3 @@
-/*
- * Project:     AetherRISC
- * File:        ISimulationTracer.cs
- * Version:     1.0.0
- * Description: Defines the contract for the system's deterministic logging and tracing engine.
- * Used to capture pipeline states, memory access, and register changes.
- */
-
 namespace AetherRISC.Core.Abstractions.Diagnostics;
 
 public interface ISimulationTracer

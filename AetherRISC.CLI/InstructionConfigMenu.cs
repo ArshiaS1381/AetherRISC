@@ -87,7 +87,6 @@ namespace AetherRISC.CLI
                 }
 
                 // Explicitly wipe the rest of the screen to avoid artifacts
-                // We use PadRight on an empty string to fill width
                 string clearLine = new string(' ', screenW);
                 int linesUsed = 2 + 1 + 1 + 1 + pageHeight + 1 + 1; // Approx
                 for(int k=0; k < (screenH - linesUsed); k++) sb.Append(clearLine + "\n");

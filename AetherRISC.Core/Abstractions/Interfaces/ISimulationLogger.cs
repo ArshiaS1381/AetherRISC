@@ -4,7 +4,6 @@ namespace AetherRISC.Core.Abstractions.Interfaces
 {
     public interface ISimulationLogger
     {
-        // Hints for the Runner to avoid expensive string formatting
         bool IsVerbose { get; } 
 
         void Initialize(string programName);

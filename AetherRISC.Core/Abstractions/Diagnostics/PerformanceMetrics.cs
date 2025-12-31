@@ -2,7 +2,7 @@ namespace AetherRISC.Core.Abstractions.Diagnostics
 {
     public class PerformanceMetrics
     {
-        // Pipeline-level commits (Instructions that flowed through WB)
+
         public ulong InstructionsRetired { get; set; }
         
         // ISA-level instructions (Effective instructions executed, e.g. a Fused op counts as 2)
@@ -24,7 +24,6 @@ namespace AetherRISC.Core.Abstractions.Diagnostics
 
         public double BranchAccuracy => TotalBranches == 0 ? 100.0 : (double)BranchHits / TotalBranches * 100.0;
         
-        // Fix CS0034: Explicitly cast PipelineWidth to ulong to resolve ambiguity
         public double SlotUtilization => (TotalCycles * (ulong)PipelineWidth) == 0 
             ? 0 
             : (double)InstructionsRetired / (double)(TotalCycles * (ulong)PipelineWidth) * 100.0;

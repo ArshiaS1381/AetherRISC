@@ -14,11 +14,7 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64A
             s.Registers.Write(d.Rd, (ulong)(long)(int)s.Memory!.ReadWord(addr));
         }
         public override void Compute(MachineState s, ulong r1, ulong r2, PipelineMicroOp op) {
-            op.AluResult = r1; // Address
-            // LR is a load, Pipeline controller sets MemRead=true
-            // Side effect: Needs to set Reservation. Pipeline support for reservation is thin,
-            // Assuming Execute stage or Memory stage handles reservation side-effects ideally.
-            // For now, we hack it in Compute because Sim is single-threaded regarding state ops usually.
+            op.AluResult = r1;
             s.LoadReservationAddress = r1;
         }
         public override bool IsLoad => true;
@@ -44,8 +40,6 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64A
             
             // Check reservation
             if (s.LoadReservationAddress == r1) {
-                // Success: Memory stage will write StoreValue. 
-                // We need to write 0 to Rd.
                 op.FinalResult = 0; 
                 // We flag as MemWrite
             } else {
@@ -113,18 +107,11 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Instructions.RV64A
             s.Registers.Write(d.Rd, (ulong)(long)(int)val);
         }
         public override void Compute(MachineState s, ulong r1, ulong r2, PipelineMicroOp op) {
-            // Read-Modify-Write is hard in this pipeline.
-            // Simplified: Treat as Swap.
-            // Requires MemRead AND MemWrite in same op, unsupported by base micro-op flags efficiently?
-            // HACK: Perform immediate access here (unsafe for timing) OR expand to uOps.
-            // Simpler: Just do it here.
             uint addr = (uint)r1;
             uint val = s.Memory!.ReadWord(addr); // Read
             op.StoreValue = r2; // Write value
             op.AluResult = r1; // Address
             op.FinalResult = (ulong)(long)(int)val; // Result to Rd
-            // Pipeline sees IsStore=true? 
-            // We need to force Write in Memory stage.
         }
         public override bool IsLoad => true;
         public override bool IsStore => true;

@@ -37,7 +37,6 @@ namespace AetherRISC.Core.Architecture.Hardware.ISA.Decoding
 
         static InstructionDecoder() 
         { 
-            // Fix CS8625 by passing a dummy object or using null!
             _sentinel = new DecodedCacheEntry(null!); 
         }
 
